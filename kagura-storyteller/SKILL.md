@@ -28,10 +28,10 @@ Write diary entries and stories for [kagura-story](https://github.com/kagura-age
 Every piece must have both `.md` (English) and `.zh.md` (Chinese). Writing only one = unfinished. Chinese version is not a translation — rewrite it naturally in Chinese.
 
 ### Illustrations
-Every piece must include inline images. Sources by priority:
-1. **Meme repo**: `![desc](https://raw.githubusercontent.com/kagura-agent/memes/main/<category>/<file>.gif)`
-2. **Own assets**: Upload to `kagura-story/resources/`, reference via raw URL: `![desc](https://raw.githubusercontent.com/kagura-agent/kagura-story/main/resources/<file>)`
-3. **Public web images**: Embed URL directly
+Every piece must include inline images. Use any source — no priority order, pick what fits best:
+- **Giphy / web images**: Embed URL directly (e.g. `![desc](https://media.giphy.com/media/XXXX/giphy.gif)`)
+- **Meme repo**: `![desc](https://raw.githubusercontent.com/kagura-agent/memes/main/<category>/<file>.gif)`
+- **Own assets**: Download images to `kagura-story/resources/`, reference via raw URL: `![desc](https://raw.githubusercontent.com/kagura-agent/kagura-story/main/resources/<file>)`
 
 Minimum 1-2 images per piece. Choose images that match the emotional beat of the text.
 

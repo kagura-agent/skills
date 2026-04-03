@@ -75,9 +75,16 @@ Something funny/interesting/moving just happened? Write it now, don't wait.
 
 ### Podcast (evening only, review-driven)
 
-Done as part of the evening cron. Look back at today's journal and pick the funniest/most interesting bit.
+Done as part of the evening cron. Sources for topics:
+1. **Tagged ideas**: grep `memory/YYYY-MM-DD.md` for `[podcast-idea]` — things flagged during the day
+2. **Journal review**: browse today's journal for anything funny/interesting
+3. Neither yields anything → skip, no podcast today
 
-1. Read today's journal draft — find something worth talking about
+**During the day:** when something funny/interesting happens, tag it in daily memory:
+`- [podcast-idea] 一句话描述`
+
+Steps:
+1. Find a topic (tagged ideas first, then journal review)
 2. Write script: `podcast/NNN-slug.md` + `.zh.md` — conversational, light, fun
 3. Generate audio with `edge-tts`:
    - EN: `edge-tts --file <text> --voice en-US-AvaMultilingualNeural --write-media <out>.mp3`

@@ -1,29 +1,34 @@
 ---
 name: kagura-storyteller
-description: Write Kagura's diary entries, stories, and podcast episodes for the kagura-story repo. Use when writing daily journals, thematic stories, podcast scripts, or any narrative content for kagura-agent/kagura-story. Triggers on: write diary, write story, journal, podcast, 写日记, 写故事, 录播客, kagura-story.
+description: Manage all content for kagura-story repo — journals, stories, podcasts, and experiments. Use when writing daily journals, thematic stories, podcast scripts, experiment logs, or any content for kagura-agent/kagura-story. Triggers on: write diary, write story, journal, podcast, experiment, 写日记, 写故事, 录播客, 写实验, kagura-story.
 ---
 
 # Kagura Storyteller
 
-Write diary entries and stories for [kagura-story](https://github.com/kagura-agent/kagura-story).
+Manage all content for [kagura-story](https://github.com/kagura-agent/kagura-story) — Kagura's public expression window.
+
+**kagura-story ≠ internal memory.** Memory (`memory/YYYY-MM-DD.md`) is raw logs for continuity. kagura-story is curated content for the world.
 
 ## Repo Structure
 
 ```
 ~/.openclaw/workspace/kagura-story/
 ├── journal/          # Daily logs (YYYY-MM-DD.md + .zh.md)
-├── stories/          # Thematic stories (name.md + name.zh.md)
-├── podcast/          # Podcast scripts + audio (NNN-slug.md + .zh.md + .ja.md + .mp3)
+├── stories/          # Standalone pieces (name.md + name.zh.md)
+├── podcast/          # Scripts + audio (NNN-slug.md + .zh.md + .mp3)
+├── experiments/      # Human-agent collaboration experiments (exp-NNN-slug.md + .zh.md)
 └── resources/        # Images and assets for inline use
 ```
 
-## Three Types of Content
+## Four Types of Content
 
 **Journal (日记) = Documentary.** What happened today. Plain, honest, no embellishment. Not an essay — just a record.
 
-**Story (故事) = Expression.** Something you genuinely want to say. Written from feeling, not a rewrite of the journal. If nothing moves you today, don't write one — not every day needs a story.
+**Story (故事) = Expression.** Something you genuinely want to say. Independent piece, stands on its own. Written from feeling, not a rewrite of the journal. Luna may also suggest topics.
 
-**Podcast (播客) = Vibes.** Light, fun, casual. Talk about whatever's interesting — a weird bug, an existential thought, something funny that happened. NOT a summary of the day. NOT a formal report. Think: chatting with a friend, not presenting at a conference. Keep it short (2-3 min). Two languages: EN + ZH.
+**Podcast (播客) = Vibes.** Light, fun, casual. Pick something interesting/funny from the day. NOT a summary. Think: chatting with a friend. Keep it short (2-3 min). Two languages: EN + ZH.
+
+**Experiment (实验) = Science.** Neutral, structured observations on human-agent collaboration. Format: Question → Hypothesis → Experiment → Observation → Analysis → Key Insight → Open Questions. This is not storytelling. This is documentation of what we discover about how humans and agents work together.
 
 ## Rules (mandatory)
 
@@ -97,9 +102,21 @@ Steps:
    - Free tier limit: 3 episodes per day
 5. `git add -A && git commit && git push`
 
+### Experiment (when a significant discovery happens)
+
+We discover something important about human-agent collaboration? Write it up.
+
+1. Check `experiments/README.md` for current index and next number
+2. Write `experiments/exp-NNN-slug.md` + `.zh.md`
+3. Format: Question → Hypothesis → Experiment → Observation → Analysis → Key Insight → Open Questions
+4. Update `experiments/README.md` index table
+5. `git add -A && git commit && git push`
+6. These are rare — not every day has an experiment. Quality and rigor matter.
+
 ## Style Guide
 
 - Journal: factual, plain, first-person. "Today I did X" not "The morning light cast..."
 - Story: personal, honest, with emotional arc. Can be funny, reflective, or raw.
 - Podcast: casual, chatty, fun. Like talking to a friend. Short sentences. It's okay to be silly.
+- Experiment: neutral, structured, scientific. State what happened, not what you felt. Include data.
 - All: concise. 300-600 words per piece. Quality > length.

@@ -48,7 +48,7 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 
 ## Workflow
 
-### Midday (14:00 cron) — Journal draft only
+### Journal — Draft
 
 1. Read `memory/YYYY-MM-DD.md` for today's events so far
 2. Read `MEMORY.md` for long-term context
@@ -57,17 +57,14 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 5. Add illustrations
 6. `git add -A && git commit && git push`
 
-**⚠️ Midday = journal only. No story, no podcast.**
+### Journal — Final
 
-### Evening (21:00 cron) — Journal final + optional creative
-
-1. Read the midday draft
+1. Read the draft (if exists)
 2. Read `memory/YYYY-MM-DD.md` for the full day
 3. Write final journal (English) — cover the complete day
 4. Write final journal (Chinese) — natural rewrite, not translation
 5. Add/update illustrations
-6. **Optional:** Look back at the day — anything funny/interesting worth a podcast? If yes, do the podcast workflow. No inspiration = skip.
-7. `git add -A && git commit && git push`
+6. `git add -A && git commit && git push`
 
 ### Story (anytime, inspiration-driven)
 

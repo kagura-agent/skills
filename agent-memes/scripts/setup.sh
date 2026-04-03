@@ -13,3 +13,12 @@ else
 fi
 
 echo "✅ Memes ready at $MEME_DIR ($(find "$MEME_DIR" -type f \( -name '*.gif' -o -name '*.jpg' -o -name '*.png' \) | wc -l) files)"
+
+# Install feishu-send-image.mjs for fast direct-API sending (~2s vs ~15s CLI)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TARGET_DIR="${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}/scripts"
+mkdir -p "$TARGET_DIR"
+if [ -f "$SCRIPT_DIR/feishu-send-image.mjs" ]; then
+  cp "$SCRIPT_DIR/feishu-send-image.mjs" "$TARGET_DIR/feishu-send-image.mjs"
+  echo "✅ Feishu quick-send script installed at $TARGET_DIR/feishu-send-image.mjs"
+fi

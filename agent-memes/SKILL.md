@@ -61,7 +61,31 @@ Memes are communication. Use them like a human would in chat:
 
 ## Sending a Meme
 
-### Via OpenClaw CLI (works for any channel)
+### Method 1: Direct API Script (Recommended — ~2s)
+
+The fastest way. A lightweight script that calls the Feishu API directly, no OpenClaw runtime needed:
+
+```bash
+node scripts/feishu-send-image.mjs <target> <meme_path>
+```
+
+Examples:
+```bash
+# Send to a user (open_id)
+node scripts/feishu-send-image.mjs user:ou_xxx ~/.openclaw/workspace/memes/reactions/facepalm.gif
+
+# Send to a group chat (chat_id)
+node scripts/feishu-send-image.mjs oc_xxx ~/.openclaw/workspace/memes/celebrate/party.gif
+```
+
+Setup: Run `bash scripts/setup.sh` — it creates the script automatically. Requires:
+- Node.js 18+ (native fetch + FormData)
+- Feishu app credentials in `~/.openclaw/openclaw.json` (`channels.feishu.accounts.<name>.appId` / `appSecret`)
+- Token is cached to `/tmp/feishu-token.json` (auto-refreshes on expiry)
+
+### Method 2: OpenClaw CLI (~15-20s)
+
+Works for any channel but slower (loads full plugin stack):
 
 ```bash
 openclaw message send \
@@ -72,7 +96,7 @@ openclaw message send \
   -m "<optional caption>"
 ```
 
-### Via agent text reply (channels with auto-detect)
+### Method 3: Agent text reply (channels with auto-detect)
 
 Reply with ONLY the absolute path to the image as the entire message. No other text. The channel outbound may auto-detect and upload it. This only works if the path is under an allowed `mediaLocalRoots` directory.
 

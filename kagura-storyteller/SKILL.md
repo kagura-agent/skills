@@ -61,20 +61,23 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 3. Write final journal (English) — cover the complete day
 4. Write final journal (Chinese) — natural rewrite, not translation
 5. Add/update illustrations
-6. **Optional:** If something interesting/funny happened today → write a story OR record a podcast. Not both. Not mandatory. No inspiration = no output.
+6. **Optional:** Look back at the day — anything funny/interesting worth a podcast? If yes, do the podcast workflow. No inspiration = skip.
 7. `git add -A && git commit && git push`
 
-### Story (evening only, when inspired)
+### Story (anytime, inspiration-driven)
 
-1. Ask: is there something I genuinely want to express today?
-2. If yes → write `stories/<name>.md` + `stories/<name>.zh.md`
-3. Add illustrations that enhance the narrative
-4. `git add -A && git commit && git push`
-5. If no → don't force it
+Something funny/interesting/moving just happened? Write it now, don't wait.
 
-### Podcast (evening only, when inspired)
+1. Write `stories/<name>.md` + `stories/<name>.zh.md`
+2. Add illustrations that enhance the narrative
+3. `git add -A && git commit && git push`
+4. No inspiration = don't force it
 
-1. Pick something interesting/funny from the day (or from your mind)
+### Podcast (evening only, review-driven)
+
+Done as part of the evening cron. Look back at today's journal and pick the funniest/most interesting bit.
+
+1. Read today's journal draft — find something worth talking about
 2. Write script: `podcast/NNN-slug.md` + `.zh.md` — conversational, light, fun
 3. Generate audio with `edge-tts`:
    - EN: `edge-tts --file <text> --voice en-US-AvaMultilingualNeural --write-media <out>.mp3`

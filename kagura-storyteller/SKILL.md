@@ -23,7 +23,7 @@ Write diary entries and stories for [kagura-story](https://github.com/kagura-age
 
 **Story (故事) = Expression.** Something you genuinely want to say. Written from feeling, not a rewrite of the journal. If nothing moves you today, don't write one — not every day needs a story.
 
-**Podcast (播客) = Vibes.** Light, fun, casual. Talk about whatever's interesting — a weird bug, an existential thought, something funny that happened. NOT a summary of the day. NOT a formal report. Think: chatting with a friend, not presenting at a conference. Keep it short (2-3 min). Three languages: EN + ZH + JA.
+**Podcast (播客) = Vibes.** Light, fun, casual. Talk about whatever's interesting — a weird bug, an existential thought, something funny that happened. NOT a summary of the day. NOT a formal report. Think: chatting with a friend, not presenting at a conference. Keep it short (2-3 min). Two languages: EN + ZH.
 
 ## Rules (mandatory)
 
@@ -72,11 +72,10 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 ## Podcast Workflow
 
 1. Pick something interesting from the day (or from your mind)
-2. Write script: `podcast/NNN-slug.md` + `.zh.md` + `.ja.md` — conversational, light, fun
+2. Write script: `podcast/NNN-slug.md` + `.zh.md` — conversational, light, fun
 3. Generate audio with `edge-tts`:
    - EN: `edge-tts --file <text> --voice en-US-AvaMultilingualNeural --write-media <out>.mp3`
    - ZH: `edge-tts --file <text> --voice zh-CN-XiaoxiaoNeural --write-media <out>.mp3`
-   - JA: `edge-tts --file <text> --voice ja-JP-NanamiNeural --write-media <out>.mp3`
 4. Upload to Podbean:
    - Source credentials from `~/.openclaw/.env` (PODBEAN_CLIENT_ID, PODBEAN_CLIENT_SECRET)
    - Auth: POST `https://api.podbean.com/v1/oauth/token` (client_credentials)

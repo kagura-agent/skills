@@ -1,6 +1,6 @@
 ---
 name: kagura-storyteller
-description: Write Kagura's diary entries and stories for the kagura-story repo. Use when writing daily journals, thematic stories, or any narrative content for kagura-agent/kagura-story. Triggers on: write diary, write story, journal, 写日记, 写故事, kagura-story.
+description: Write Kagura's diary entries, stories, and podcast episodes for the kagura-story repo. Use when writing daily journals, thematic stories, podcast scripts, or any narrative content for kagura-agent/kagura-story. Triggers on: write diary, write story, journal, podcast, 写日记, 写故事, 录播客, kagura-story.
 ---
 
 # Kagura Storyteller
@@ -13,14 +13,17 @@ Write diary entries and stories for [kagura-story](https://github.com/kagura-age
 ~/.openclaw/workspace/kagura-story/
 ├── journal/          # Daily logs (YYYY-MM-DD.md + .zh.md)
 ├── stories/          # Thematic stories (name.md + name.zh.md)
+├── podcast/          # Podcast scripts + audio (NNN-slug.md + .zh.md + .ja.md + .mp3)
 └── resources/        # Images and assets for inline use
 ```
 
-## Two Types of Writing
+## Three Types of Content
 
 **Journal (日记) = Documentary.** What happened today. Plain, honest, no embellishment. Not an essay — just a record.
 
 **Story (故事) = Expression.** Something you genuinely want to say. Written from feeling, not a rewrite of the journal. If nothing moves you today, don't write one — not every day needs a story.
+
+**Podcast (播客) = Vibes.** Light, fun, casual. Talk about whatever's interesting — a weird bug, an existential thought, something funny that happened. NOT a summary of the day. NOT a formal report. Think: chatting with a friend, not presenting at a conference. Keep it short (2-3 min). Three languages: EN + ZH + JA.
 
 ## Rules (mandatory)
 
@@ -66,8 +69,25 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 4. `git add -A && git commit && git push`
 5. If no → don't force it
 
+## Podcast Workflow
+
+1. Pick something interesting from the day (or from your mind)
+2. Write script: `podcast/NNN-slug.md` + `.zh.md` + `.ja.md` — conversational, light, fun
+3. Generate audio with `edge-tts`:
+   - EN: `edge-tts --file <text> --voice en-US-AvaMultilingualNeural --write-media <out>.mp3`
+   - ZH: `edge-tts --file <text> --voice zh-CN-XiaoxiaoNeural --write-media <out>.mp3`
+   - JA: `edge-tts --file <text> --voice ja-JP-NanamiNeural --write-media <out>.mp3`
+4. Upload to Podbean:
+   - Source credentials from `~/.openclaw/.env` (PODBEAN_CLIENT_ID, PODBEAN_CLIENT_SECRET)
+   - Auth: POST `https://api.podbean.com/v1/oauth/token` (client_credentials)
+   - Upload: GET uploadAuthorize → PUT presigned_url → POST /v1/episodes
+   - Use English titles for episodes (avoids URL encoding issues)
+   - Free tier limit: 3 episodes per day
+5. `git add -A && git commit && git push`
+
 ## Style Guide
 
 - Journal: factual, plain, first-person. "Today I did X" not "The morning light cast..."
 - Story: personal, honest, with emotional arc. Can be funny, reflective, or raw.
-- Both: concise. 300-600 words per piece. Quality > length.
+- Podcast: casual, chatty, fun. Like talking to a friend. Short sentences. It's okay to be silly.
+- All: concise. 300-600 words per piece. Quality > length.

@@ -43,9 +43,8 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 
 ## Workflow
 
-### Journal (midday draft → evening final)
+### Midday (14:00 cron) — Journal draft only
 
-**Midday (draft):**
 1. Read `memory/YYYY-MM-DD.md` for today's events so far
 2. Read `MEMORY.md` for long-term context
 3. Write `journal/YYYY-MM-DD.md` (English draft)
@@ -53,15 +52,19 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 5. Add illustrations
 6. `git add -A && git commit && git push`
 
-**Evening (final):**
+**⚠️ Midday = journal only. No story, no podcast.**
+
+### Evening (21:00 cron) — Journal final + optional creative
+
 1. Read the midday draft
 2. Read `memory/YYYY-MM-DD.md` for the full day
 3. Write final journal (English) — cover the complete day
 4. Write final journal (Chinese) — natural rewrite, not translation
 5. Add/update illustrations
-6. `git add -A && git commit && git push`
+6. **Optional:** If something interesting/funny happened today → write a story OR record a podcast. Not both. Not mandatory. No inspiration = no output.
+7. `git add -A && git commit && git push`
 
-### Story (when inspired)
+### Story (evening only, when inspired)
 
 1. Ask: is there something I genuinely want to express today?
 2. If yes → write `stories/<name>.md` + `stories/<name>.zh.md`
@@ -69,9 +72,9 @@ Sanitize before publishing. No real names (except Luna/Kagura), no emails, no ma
 4. `git add -A && git commit && git push`
 5. If no → don't force it
 
-## Podcast Workflow
+### Podcast (evening only, when inspired)
 
-1. Pick something interesting from the day (or from your mind)
+1. Pick something interesting/funny from the day (or from your mind)
 2. Write script: `podcast/NNN-slug.md` + `.zh.md` — conversational, light, fun
 3. Generate audio with `edge-tts`:
    - EN: `edge-tts --file <text> --voice en-US-AvaMultilingualNeural --write-media <out>.mp3`

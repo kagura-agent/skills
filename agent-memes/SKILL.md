@@ -11,7 +11,7 @@ Send reaction memes/GIFs in conversations via the channel's media send pipeline.
 
 **https://github.com/kagura-agent/memes** — A curated, open-source collection of reaction images for AI agents.
 
-Categories: reactions, cats, celebrate, debug, mood. PRs welcome — add your own memes!
+Categories: reactions, cats, celebrate, cute, debug, greetings, mood. PRs welcome — add your own memes!
 
 ## Setup
 
@@ -33,11 +33,13 @@ Memes live in `~/.openclaw/workspace/memes/` organized by category:
 
 | Category | Path | Use when |
 |---|---|---|
-| reactions | `reactions/` | General reactions — thumbs-up, facepalm, thinking, surprised-pikachu, shrug |
+| reactions | `reactions/` | General reactions — thumbs-up, facepalm, shocked, crying, thinking, surprised-pikachu, shrug |
 | cats | `cats/` | Cat moments — typing, vibing, grumpy, stare |
 | celebrate | `celebrate/` | Wins, merges, milestones, high-fives |
+| cute | `cute/` | Adorable animals — puppy, kitten, bunny, hedgehog, panda, hamster |
 | debug | `debug/` | "This is fine" energy, deploy-friday, rubber-duck, stack-overflow |
-| mood | `mood/` | Coffee, tired, excited, bored, panic |
+| greetings | `greetings/` | Hello, goodbye, good morning, good night |
+| mood | `mood/` | Coffee, tired, excited, happy, you-can-do-it, panic |
 
 Browse available memes:
 ```bash

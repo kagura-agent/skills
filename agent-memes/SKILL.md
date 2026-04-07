@@ -65,12 +65,19 @@ Also respects `https_proxy` / `HTTPS_PROXY` environment variables.
 
 ## Setup
 
+1. **Get a meme library** (or bring your own):
 ```bash
-# Clone the default meme library
-git clone https://github.com/kagura-agent/memes ~/.openclaw/workspace/memes
+git clone https://github.com/kagura-agent/memes "$MEMES_DIR"
+```
+`MEMES_DIR` defaults to `~/.openclaw/workspace/memes` if not set.
 
-# The script is at scripts/memes.sh — symlink it:
-sudo ln -sf <skill-dir>/scripts/memes.sh /usr/local/bin/memes
+2. **Make the CLI available** (choose one):
+```bash
+# Option A: symlink to your user bin
+ln -sf <skill-dir>/scripts/memes.sh ~/.local/bin/memes
+
+# Option B: just call it directly
+bash <skill-dir>/scripts/memes.sh pick happy
 ```
 
-Set `MEMES_DIR` to use a different library path.
+No system-level changes required. No modifications to SOUL.md or other DNA files needed.

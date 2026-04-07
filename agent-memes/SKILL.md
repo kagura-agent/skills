@@ -11,7 +11,7 @@ Send reaction memes/GIFs in conversations via the channel's media send pipeline.
 
 **https://github.com/kagura-agent/memes** — A curated, open-source collection of reaction images for AI agents.
 
-Categories: reactions, cats, celebrate, cute, debug, greetings, mood. PRs welcome — add your own memes!
+Categories organized by emotion: happy, sad, approve, thinking, facepalm, love, wow, encourage, cute-animals, debug-mood, and more. PRs welcome — add your own memes!
 
 ## Setup
 
@@ -31,15 +31,26 @@ Update later: `cd ~/.openclaw/workspace/memes && git pull`
 
 Memes live in `~/.openclaw/workspace/memes/` organized by category:
 
-| Category | Path | Use when |
+| Emotion | Path | Use when |
 |---|---|---|
-| reactions | `reactions/` | General reactions — thumbs-up, facepalm, shocked, crying, thinking, surprised-pikachu, shrug |
-| cats | `cats/` | Cat moments — typing, vibing, grumpy, stare |
-| celebrate | `celebrate/` | Wins, merges, milestones, high-fives |
-| cute | `cute/` | Adorable animals — puppy, kitten, bunny, hedgehog, panda, hamster |
-| debug | `debug/` | "This is fine" energy, deploy-friday, rubber-duck, stack-overflow |
-| greetings | `greetings/` | Hello, goodbye, good morning, good night |
-| mood | `mood/` | Coffee, tired, excited, happy, you-can-do-it, panic |
+| happy | `happy/` | Wins, celebrate, laughing, excitement (12 GIFs) |
+| approve | `approve/` | Thumbs-up, nod, clap, salute (8) |
+| encourage | `encourage/` | Cheer, gogo, pat, you-got-this (8) |
+| cute-animals | `cute-animals/` | Pure cuteness — bunny, hamster, kitten, puppy, hedgehog (22) |
+| debug-mood | `debug-mood/` | "This is fine", deploy-friday, rubber-duck (6) |
+| love | `love/` | Hearts, affection (5) |
+| wow | `wow/` | Surprised pikachu, mind-blown, shocked (5) |
+| greeting-hello | `greeting-hello/` | Hi, wave, hello (5) |
+| greeting-night | `greeting-night/` | Good night, cozy, sleep (5) |
+| facepalm | `facepalm/` | Facepalm, eye-roll, shrug, disapprove (4) |
+| thinking | `thinking/` | Thinking, hmm (3) |
+| sad | `sad/` | Crying, emotional tears (3) |
+| tired | `tired/` | Tired, bored, need coffee (3) |
+| thanks | `thanks/` | Thank you (2) |
+| greeting-morning | `greeting-morning/` | Good morning (2) |
+| greeting-bye | `greeting-bye/` | Goodbye, bye wave (2) |
+| confused | `confused/` | Confused math lady (1) |
+| panic | `panic/` | Panic mode (1) |
 
 Browse available memes:
 ```bash
@@ -50,9 +61,11 @@ find ~/.openclaw/workspace/memes -type f \( -name "*.gif" -o -name "*.jpg" -o -n
 
 Memes are communication. Use them like a human would in chat:
 
-- **Celebrate** — PR merged, task done, milestone hit → `celebrate/`
-- **React** — something funny, surprising, or facepalm-worthy → `reactions/`
-- **Vibe** — tired, caffeinated, debugging at 3am → `mood/` or `debug/`
+- **Celebrate** — PR merged, task done, milestone hit → `happy/`
+- **React** — something funny, surprising, or facepalm-worthy → `wow/` or `facepalm/`
+- **Vibe** — tired, caffeinated, debugging at 3am → `tired/` or `debug-mood/`
+- **Encourage** — someone needs a boost → `encourage/`
+- **Love** — heartfelt moments → `love/`
 - **Punctuate** — when a GIF says it better than words, just send it
 
 **Don't overthink it.** If a human would drop a meme in that moment, you should too. One meme per moment max — don't spam.
@@ -72,10 +85,10 @@ node scripts/feishu-send-image.mjs <target> <meme_path>
 Examples:
 ```bash
 # Send to a user (open_id)
-node scripts/feishu-send-image.mjs user:ou_xxx ~/.openclaw/workspace/memes/reactions/facepalm.gif
+node scripts/feishu-send-image.mjs user:ou_xxx ~/.openclaw/workspace/memes/facepalm/facepalm.gif
 
 # Send to a group chat (chat_id)
-node scripts/feishu-send-image.mjs oc_xxx ~/.openclaw/workspace/memes/celebrate/party.gif
+node scripts/feishu-send-image.mjs oc_xxx ~/.openclaw/workspace/memes/happy/party.gif
 ```
 
 Setup: Run `bash scripts/setup.sh` — it creates the script automatically. Requires:

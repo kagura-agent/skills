@@ -1,6 +1,6 @@
 ---
 name: flowforge
-description: "Run structured multi-step workflows via FlowForge engine. Use when: (1) starting a work loop or contribution cycle (打工, contribute, work on issues, PR), (2) studying a project or topic (学习, study, research), (3) reflecting on completed work (反思, reflect, review), (4) any multi-step task that has a defined FlowForge workflow. Triggers on: 打工, 干活, work loop, start working, contribute, study, 学习, reflect, 反思, review code, audit. NOT for: simple one-off tasks, quick questions, or tasks without a matching workflow."
+description: "MANDATORY workflow runner for multi-step tasks. ANY task matching these intents MUST go through FlowForge — do not spawn subagents or execute directly without reading this skill first. Intents: (1) 打工, contribute, work on issues, PR, scan issues (2) 学习, study, research (3) 反思, reflect, review (4) audit, daily-audit, tool-review, evolve. If you're about to do any of these without FlowForge, STOP and read this skill. NOT for: simple one-off tasks, quick questions, or tasks without a matching workflow."
 ---
 
 # FlowForge Workflow Runner

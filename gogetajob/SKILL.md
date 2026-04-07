@@ -72,7 +72,7 @@ Sub-agents delegate all code changes to Claude Code:
 cd <repo> && acpx --approve-all claude exec "<task description with full context>"
 ```
 
-Task descriptions must include: issue context, reviewer feedback, architecture notes, maintainer preferences from knowledge-base, and a verification suffix:
+Task descriptions must include: issue context, reviewer feedback, architecture notes, maintainer preferences from wiki, and a verification suffix:
 
 > "Before committing: 1) grep for all test files that import/mock the interfaces you changed, update their mocks. 2) Run the project's test/lint commands. 3) git diff --stat to confirm no files were missed."
 
@@ -115,7 +115,7 @@ Before creating any PR:
 
 ### 6. Knowledge accumulation
 
-- Before working on a repo: read `knowledge-base/projects/<repo>.md` (field notes)
+- Before working on a repo: read `wiki/projects/<repo>.md` (field notes)
 - After finishing: update field notes with lessons, maintainer preferences, CI quirks
 - Cross-project insights → memex cards
 - Behavioral patterns → beliefs-candidates.md

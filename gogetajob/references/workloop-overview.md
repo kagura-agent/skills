@@ -46,7 +46,7 @@ Tips:
 ### study
 
 Deep research before implementation:
-1. **Read field notes** (`knowledge-base/projects/<repo>.md`) — mandatory
+1. **Read field notes** (`wiki/projects/<repo>.md`) — mandatory
 2. **Search cross-project knowledge** via memex
 3. **Learn maintainer patterns** from field notes or recent merged PRs
 4. Read CONTRIBUTING.md, understand code structure

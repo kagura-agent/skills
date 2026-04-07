@@ -32,7 +32,10 @@ After `memes pick` gives you a path, send it through your channel:
 # Feishu (fast, direct API)
 node scripts/feishu-send-image.mjs <target> <path>
 
-# Any channel (OpenClaw CLI)
+# Discord (fast, curl + socks5 proxy)
+bash scripts/discord-send-image.sh <channel_id> <path> [caption]
+
+# Any channel (OpenClaw CLI — slower, loads all plugins)
 openclaw message send --channel <channel> --account <account> -t "<target>" --media <path>
 ```
 

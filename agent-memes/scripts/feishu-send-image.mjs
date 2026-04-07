@@ -18,9 +18,11 @@ if (!target || !imagePath) {
 // --- credentials ---
 const configPath = resolve(homedir(), '.openclaw/openclaw.json');
 const config = JSON.parse(readFileSync(configPath, 'utf8'));
-const acct = config.channels?.feishu?.accounts?.kagura;
+const accounts = config.channels?.feishu?.accounts ?? {};
+const acctName = process.env.FEISHU_ACCOUNT || Object.keys(accounts)[0];
+const acct = accounts[acctName];
 if (!acct?.appId || !acct?.appSecret) {
-  console.error('Missing appId/appSecret in ~/.openclaw/openclaw.json (channels.feishu.accounts.kagura)');
+  console.error(`Missing appId/appSecret in ~/.openclaw/openclaw.json (channels.feishu.accounts.${acctName || '?'})`);
   process.exit(1);
 }
 

@@ -32,12 +32,36 @@ After `memes pick` gives you a path, send it through your channel:
 # Feishu (fast, direct API)
 node scripts/feishu-send-image.mjs <target> <path>
 
-# Discord (fast, curl + socks5 proxy)
+# Discord (fast, direct API via curl)
 bash scripts/discord-send-image.sh <channel_id> <path> [caption]
 
 # Any channel (OpenClaw CLI — slower, loads all plugins)
 openclaw message send --channel <channel> --account <account> -t "<target>" --media <path>
 ```
+
+### Multi-agent setup
+
+On a gateway with multiple agents, set the account name so each agent uses its own credentials:
+
+```bash
+# Feishu
+FEISHU_ACCOUNT=myagent node scripts/feishu-send-image.mjs <target> <path>
+
+# Discord
+DISCORD_ACCOUNT=myagent bash scripts/discord-send-image.sh <channel_id> <path>
+```
+
+Single-agent setups don't need this — the first account in `openclaw.json` is used automatically.
+
+### Proxy (Discord)
+
+If Discord API is blocked, set a proxy:
+
+```bash
+DISCORD_PROXY=socks5h://127.0.0.1:1080 bash scripts/discord-send-image.sh ...
+```
+
+Also respects `https_proxy` / `HTTPS_PROXY` environment variables.
 
 ## Setup
 

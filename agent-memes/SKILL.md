@@ -1,6 +1,6 @@
 ---
 name: agent-memes
-version: 1.1.0
+version: 1.3.0
 description: Send meme reaction images in chat. Use when the conversation calls for a visual reaction — humor, celebration, frustration, facepalm, or any moment where a meme hits harder than words. Triggers on: meme, reaction image, send a meme, expression, 表情包, 发个表情. Also use proactively when the vibe calls for it.
 ---
 
@@ -14,6 +14,11 @@ The sending scripts need API credentials to deliver images:
 
 - **Feishu**: `FEISHU_APP_ID` + `FEISHU_APP_SECRET` env vars (or reads from `~/.openclaw/openclaw.json`)
 - **Discord**: `DISCORD_BOT_TOKEN` env var (or reads from `~/.openclaw/openclaw.json`)
+- **Telegram**: `TELEGRAM_BOT_TOKEN` env var (or reads from `~/.openclaw/openclaw.json`)
+- **Slack**: `SLACK_BOT_TOKEN` env var (or reads from `~/.openclaw/openclaw.json`)
+- **WhatsApp**: `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_ID` env vars (or reads from `~/.openclaw/openclaw.json`)
+- **WeChat (企业微信)**: `WECHAT_CORP_ID` + `WECHAT_CORP_SECRET` + `WECHAT_AGENT_ID` env vars (or reads from `~/.openclaw/openclaw.json`)
+- **QQ Bot**: `QQ_BOT_TOKEN` + `QQ_BOT_APPID` env vars (or reads from `~/.openclaw/openclaw.json`)
 
 The `memes pick` CLI itself needs **no credentials** — it just picks a local file.
 
@@ -46,6 +51,21 @@ node scripts/feishu-send-image.mjs <target> <path>
 
 # Discord (fast, direct API via curl)
 bash scripts/discord-send-image.sh <channel_id> <path> [caption]
+
+# Telegram
+bash scripts/telegram-send-image.sh <chat_id> <path> [caption]
+
+# Slack
+bash scripts/slack-send-image.sh <channel_id> <path> [caption]
+
+# WhatsApp
+bash scripts/whatsapp-send-image.sh <recipient_phone> <path> [caption]
+
+# WeChat (企业微信)
+bash scripts/wechat-send-image.sh <userid> <path> [caption]
+
+# QQ Bot
+bash scripts/qq-send-image.sh <channel_id> <path> [caption]
 
 # Any channel (OpenClaw CLI — slower, loads all plugins)
 openclaw message send --channel <channel> --account <account> -t "<target>" --media <path>

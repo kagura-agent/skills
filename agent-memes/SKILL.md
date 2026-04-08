@@ -19,6 +19,7 @@ The sending scripts need API credentials to deliver images:
 - **WhatsApp**: `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_ID` env vars (or reads from `~/.openclaw/openclaw.json`)
 - **WeChat (企业微信)**: `WECHAT_CORP_ID` + `WECHAT_CORP_SECRET` + `WECHAT_AGENT_ID` env vars (or reads from `~/.openclaw/openclaw.json`)
 - **QQ Bot**: `QQ_BOT_TOKEN` + `QQ_BOT_APPID` env vars (or reads from `~/.openclaw/openclaw.json`)
+- **LINE**: `LINE_CHANNEL_ACCESS_TOKEN` env var (or reads from `~/.openclaw/openclaw.json`)
 
 The `memes pick` CLI itself needs **no credentials** — it just picks a local file.
 
@@ -66,6 +67,9 @@ bash scripts/wechat-send-image.sh <userid> <path> [caption]
 
 # QQ Bot
 bash scripts/qq-send-image.sh <channel_id> <path> [caption]
+
+# LINE (image must be a public https URL)
+bash scripts/line-send-image.sh <user_or_group_id> <image_url> [caption]
 
 # Any channel (OpenClaw CLI — slower, loads all plugins)
 openclaw message send --channel <channel> --account <account> -t "<target>" --media <path>

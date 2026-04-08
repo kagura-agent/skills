@@ -79,9 +79,16 @@ Also respects `https_proxy` / `HTTPS_PROXY` environment variables.
 
 1. **Get a meme library** (or bring your own):
 ```bash
+# LFS is required — memes repo stores images via Git LFS
+git lfs install  # one-time setup if you haven't used LFS before
 git clone https://github.com/kagura-agent/memes "$MEMES_DIR"
 ```
 `MEMES_DIR` defaults to `~/.openclaw/workspace/memes` if not set.
+
+> ⚠️ If images show as small text files (~130 bytes), LFS didn't pull. Run:
+> ```bash
+> cd "$MEMES_DIR" && git lfs pull
+> ```
 
 2. **Make the CLI available** (choose one):
 ```bash

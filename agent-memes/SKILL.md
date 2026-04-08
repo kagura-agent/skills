@@ -1,12 +1,23 @@
 ---
 name: agent-memes
-version: 0.2.0
+version: 1.1.0
 description: Send meme reaction images in chat. Use when the conversation calls for a visual reaction — humor, celebration, frustration, facepalm, or any moment where a meme hits harder than words. Triggers on: meme, reaction image, send a meme, expression, 表情包, 发个表情. Also use proactively when the vibe calls for it.
 ---
 
 # Agent Memes
 
 Memes are communication. Use them like a human would in chat.
+
+## ⚠️ Credentials Notice
+
+The sending scripts need API credentials to deliver images:
+
+- **Feishu**: `FEISHU_APP_ID` + `FEISHU_APP_SECRET` env vars (or reads from `~/.openclaw/openclaw.json`)
+- **Discord**: `DISCORD_BOT_TOKEN` env var (or reads from `~/.openclaw/openclaw.json`)
+
+The `memes pick` CLI itself needs **no credentials** — it just picks a local file.
+
+If you only use `memes pick` + your own sending method, no credentials are accessed.
 
 ## Quick Start
 

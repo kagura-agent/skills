@@ -3,7 +3,8 @@
 # Fast Discord image send via curl, bypassing OpenClaw CLI startup overhead.
 #
 # Env vars (all optional):
-#   DISCORD_ACCOUNT  - account name in openclaw.json (default: auto-detect first account)
+#   DISCORD_BOT_TOKEN - bot token (preferred, avoids reading openclaw.json)
+#   DISCORD_ACCOUNT  - account name in openclaw.json (fallback if no DISCORD_BOT_TOKEN)
 #   DISCORD_PROXY    - proxy URL for curl, e.g. socks5h://127.0.0.1:1080 (default: none)
 
 set -euo pipefail
@@ -14,15 +15,19 @@ CAPTION="${3:-}"
 
 ACCOUNT="${DISCORD_ACCOUNT:-}"
 
-# Read bot token from openclaw config
-TOKEN=$(node -e "
+# Read bot token: env var preferred, fallback to openclaw config
+if [ -n "${DISCORD_BOT_TOKEN:-}" ]; then
+  TOKEN="$DISCORD_BOT_TOKEN"
+else
+  TOKEN=$(node -e "
 const c=JSON.parse(require('fs').readFileSync(require('os').homedir()+'/.openclaw/openclaw.json','utf8'));
 const accts = c.channels?.discord?.accounts || {};
 const name = '${ACCOUNT}' || Object.keys(accts)[0] || '';
 const token = accts[name]?.token || '';
-if (!token) { console.error('No token found for account: ' + (name || '(none)')); process.exit(1); }
+if (!token) { console.error('No token found. Set DISCORD_BOT_TOKEN env var or configure openclaw.json'); process.exit(1); }
 console.log(token);
 ")
+fi
 
 CURL_ARGS=(
   -s

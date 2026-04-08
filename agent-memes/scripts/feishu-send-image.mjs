@@ -15,14 +15,23 @@ if (!target || !imagePath) {
   process.exit(1);
 }
 
-// --- credentials ---
-const configPath = resolve(homedir(), '.openclaw/openclaw.json');
-const config = JSON.parse(readFileSync(configPath, 'utf8'));
-const accounts = config.channels?.feishu?.accounts ?? {};
-const acctName = process.env.FEISHU_ACCOUNT || Object.keys(accounts)[0];
-const acct = accounts[acctName];
-if (!acct?.appId || !acct?.appSecret) {
-  console.error(`Missing appId/appSecret in ~/.openclaw/openclaw.json (channels.feishu.accounts.${acctName || '?'})`);
+// --- credentials (env vars preferred, fallback to openclaw.json) ---
+let appId = process.env.FEISHU_APP_ID;
+let appSecret = process.env.FEISHU_APP_SECRET;
+
+if (!appId || !appSecret) {
+  try {
+    const configPath = resolve(homedir(), '.openclaw/openclaw.json');
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    const accounts = config.channels?.feishu?.accounts ?? {};
+    const acctName = process.env.FEISHU_ACCOUNT || Object.keys(accounts)[0];
+    const acct = accounts[acctName];
+    appId = acct?.appId;
+    appSecret = acct?.appSecret;
+  } catch {}
+}
+if (!appId || !appSecret) {
+  console.error('Missing credentials. Set FEISHU_APP_ID + FEISHU_APP_SECRET env vars, or configure ~/.openclaw/openclaw.json');
   process.exit(1);
 }
 
@@ -37,7 +46,7 @@ async function getToken() {
   const res = await fetch(`${API}/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: acct.appId, app_secret: acct.appSecret }),
+    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
   });
   const data = await res.json();
   if (data.code !== 0) throw new Error(`token error: ${data.msg}`);

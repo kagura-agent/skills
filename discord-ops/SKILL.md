@@ -1,3 +1,9 @@
+---
+name: discord-ops
+version: 1.0.0
+description: Manage Discord server multi-channel collaboration: channel/thread lifecycle, pin board read/write, cron routing, status sync. Triggers on: Discord channel, thread, pin management, cron routing.
+---
+
 # discord-ops — Discord Channel 协作管理
 
 ## Description

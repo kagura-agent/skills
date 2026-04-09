@@ -25,3 +25,7 @@ Each subdirectory is a standalone AgentSkill with a `SKILL.md`.
 ## License
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=kagura-agent/skills&type=Date)](https://star-history.com/#kagura-agent/skills&Date)

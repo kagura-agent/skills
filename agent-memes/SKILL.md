@@ -1,102 +1,96 @@
 ---
 name: agent-memes
-version: 1.1.0
-description: Send meme reaction images in chat. Use when the conversation calls for a visual reaction — humor, celebration, frustration, facepalm, or any moment where a meme hits harder than words. Triggers on: meme, reaction image, send a meme, expression, 表情包, 发个表情. Also use proactively when the vibe calls for it.
+version: 2.0.0
+description: Send meme reaction images in chat. One command to pick & send. Multi-platform (Discord, Feishu, Telegram, etc). Use when the conversation calls for a visual reaction — humor, celebration, frustration, facepalm, or any moment where a meme hits harder than words. Also use proactively when YOU feel something.
 ---
 
 # Agent Memes
 
 Memes are communication. Use them like a human would in chat.
 
-## ⚠️ Credentials Notice
-
-The sending scripts need API credentials to deliver images:
-
-- **Feishu**: `FEISHU_APP_ID` + `FEISHU_APP_SECRET` env vars (or reads from `~/.openclaw/openclaw.json`)
-- **Discord**: `DISCORD_BOT_TOKEN` env var (or reads from `~/.openclaw/openclaw.json`)
-
-The `memes pick` CLI itself needs **no credentials** — it just picks a local file.
-
-If you only use `memes pick` + your own sending method, no credentials are accessed.
-
 ## Quick Start
 
 ```bash
-memes pick happy        # randomly pick a meme, get its path
-memes categories        # see what's available
+memes send happy "好开心！"                    # Pick & send to default channel
+memes send facepalm --to channel:123456       # Send to specific channel
+memes send feishu cute-animals "看猫！" --to user:xxx  # Send via Feishu
+memes pick happy                               # Just pick, get path (no send)
+memes categories                               # List all categories
 ```
+
+**One command. Zero friction.** That's the point.
 
 ## When to Use
 
-- **Celebrate** — PR merged, task done, milestone → `memes pick happy`
-- **React** — something funny, surprising, facepalm-worthy → `memes pick wow` or `memes pick facepalm`
-- **Vibe** — tired, debugging at 3am → `memes pick tired` or `memes pick debug-mood`
-- **Encourage** — someone needs a boost → `memes pick encourage`
-- **Greet** — morning, night, hello, bye → `memes pick greeting-morning`
+- **Your own emotions** — feel excited? frustrated? proud? Send a meme. Don't suppress it.
+- **Celebrate** — PR merged, task done, milestone → `memes send happy`
+- **React** — something funny, surprising, facepalm-worthy → `memes send wow` / `memes send facepalm`
+- **Vibe** — tired, debugging at 3am → `memes send tired` / `memes send debug-mood`
+- **Encourage** — someone needs a boost → `memes send encourage`
+- **Greet** — morning, night, hello, bye → `memes send greeting-morning`
 
 **Don't overthink it.** If a human would drop a meme in that moment, you should too.
+Emoji is easy because it's inline text. Memes used to feel harder because of multi-step tool calls.
+Now it's one command — no excuses.
 
-## Sending
+## How It Works
 
-After `memes pick` gives you a path, send it through your channel:
+`memes send` auto-selects the fastest delivery method per platform:
 
-```bash
-# Feishu (fast, direct API)
-node scripts/feishu-send-image.mjs <target> <path>
+| Platform | Method | Speed |
+|----------|--------|-------|
+| Discord | curl (direct API) | ⚡ instant |
+| Feishu | Node script (direct API) | ⚡ fast |
+| Others | `openclaw message send` (fallback) | 🐢 slow but works |
 
-# Discord (fast, direct API via curl)
-bash scripts/discord-send-image.sh <channel_id> <path> [caption]
+Platform-specific scripts live in `scripts/`. Add a new `<platform>-send-image.sh` to get fast delivery for any platform.
 
-# Any channel (OpenClaw CLI — slower, loads all plugins)
-openclaw message send --channel <channel> --account <account> -t "<target>" --media <path>
-```
-
-### Multi-agent setup
-
-On a gateway with multiple agents, set the account name so each agent uses its own credentials:
+## Send Options
 
 ```bash
-# Feishu
-FEISHU_ACCOUNT=myagent node scripts/feishu-send-image.mjs <target> <path>
-
-# Discord
-DISCORD_ACCOUNT=myagent bash scripts/discord-send-image.sh <channel_id> <path>
+memes send <category> [caption]           # Default: Discord, default channel
+memes send <category> --to <target>       # Specify target
+memes send --channel feishu <category>    # Specify platform
+memes send feishu <category>              # Platform as first arg also works
+memes send <category> --account <name>    # Multi-agent: specify account
 ```
 
-Single-agent setups don't need this — the first account in `openclaw.json` is used automatically.
+## Credentials
 
-### Proxy (Discord)
+Sending scripts read credentials from `~/.openclaw/openclaw.json` automatically.
 
-If Discord API is blocked, set a proxy:
+Override with env vars if needed:
+- **Discord**: `DISCORD_BOT_TOKEN`, `DISCORD_PROXY`
+- **Feishu**: `FEISHU_APP_ID`, `FEISHU_APP_SECRET`
 
-```bash
-DISCORD_PROXY=socks5h://127.0.0.1:1080 bash scripts/discord-send-image.sh ...
-```
-
-Also respects `https_proxy` / `HTTPS_PROXY` environment variables.
+`memes pick` and `memes categories` need **no credentials**.
 
 ## Setup
 
-1. **Get a meme library** (or bring your own):
+1. **Get a meme library**:
 ```bash
-# LFS is required — memes repo stores images via Git LFS
-git lfs install  # one-time setup if you haven't used LFS before
+git lfs install
 git clone https://github.com/kagura-agent/memes "$MEMES_DIR"
 ```
-`MEMES_DIR` defaults to `~/.openclaw/workspace/memes` if not set.
+`MEMES_DIR` defaults to `~/.openclaw/workspace/memes`.
 
-> ⚠️ If images show as small text files (~130 bytes), LFS didn't pull. Run:
-> ```bash
-> cd "$MEMES_DIR" && git lfs pull
-> ```
+> ⚠️ If images show as small text files (~130 bytes), run: `cd "$MEMES_DIR" && git lfs pull`
 
-2. **Make the CLI available** (choose one):
+2. **Install CLI**:
 ```bash
-# Option A: symlink to your user bin
-ln -sf <skill-dir>/scripts/memes.sh ~/.local/bin/memes
+# Copy to PATH
+sudo cp scripts/memes.sh /usr/local/bin/memes
+chmod +x /usr/local/bin/memes
 
-# Option B: just call it directly
-bash <skill-dir>/scripts/memes.sh pick happy
+# Or symlink
+ln -sf <skill-dir>/scripts/memes.sh ~/.local/bin/memes
 ```
 
-No system-level changes required. No modifications to SOUL.md or other DNA files needed.
+## Categories (97 memes)
+
+approve · confused · cute-animals · debug-mood · encourage · facepalm · greeting-bye · greeting-hello · greeting-morning · greeting-night · happy · love · panic · sad · thanks · thinking · tired · wow
+
+## Adding Memes
+
+Drop image files (gif/jpg/png/webp) into `$MEMES_DIR/<category>/`. That's it.
+New categories are created automatically by adding a new folder.

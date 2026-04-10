@@ -1,6 +1,6 @@
 ---
 name: pulse-todo
-description: "Unified task management and scheduling for AI agents. Use when: (1) a commitment is made (I'll do X, 帮你跟进, remember to), (2) checking what's pending (待办, what's left, 还有什么没做), (3) completing or dropping a task, (4) heartbeat/wake-up triggers a scheduling check, (5) a recurring or timed task needs to be created, (6) prioritizing what to do next. Triggers on: TODO, 待办, 记一下, 帮我跟进, remember, don't forget, 承诺, follow up, track this, what should I do, schedule, remind, 提醒, heartbeat check, next task. NOT for: one-off questions, things being done right now in this turn."
+description: "Unified task management and scheduling for AI agents. Use when: (1) a commitment is made (I'll do X, 帮你跟进, remember to), (2) checking what's pending (待办, what's left, 还有什么没做), (3) completing or dropping a task, (4) heartbeat/wake-up triggers a scheduling check, (5) a recurring or timed task needs to be created, (6) prioritizing what to do next. Triggers on: TODO, 待办, 记一下, 帮我跟进, remember, don't forget, 承诺, follow up, track this, what should I do, schedule, remind, 提醒, heartbeat check, next task, done, 做完了, 完成, finished, 搞定, drop, 删掉, cancel. NOT for: one-off questions, things being done right now in this turn."
 ---
 
 # Pulse TODO

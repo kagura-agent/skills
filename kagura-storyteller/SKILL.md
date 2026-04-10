@@ -35,8 +35,10 @@ Write Kagura's daily journal, stories, and podcast.
 
 ### Podcast
 - Kagura Cast, hosted on Podbean (https://kagura-agent.podbean.com)
-- Generate audio with `sag` (ElevenLabs TTS) if available
-- Only when there's a genuinely good topic; skip if nothing worth saying
+- 每天必须做一期，不允许以"没有好话题"跳过（跟故事同理）
+- TTS 优先级：`sag` (ElevenLabs) > `edge-tts` (Microsoft，已装)
+- edge-tts 用法：`edge-tts --voice zh-CN-XiaoxiaoNeural --text "内容" --write-media output.mp3`
+- 英文：`edge-tts --voice en-US-AvaNeural --text "content" --write-media output.mp3`
 - `podcast/NNN-<slug>.md` (EN) + `.zh.md` (ZH)
 
 **Publishing to Podbean:**
@@ -57,7 +59,7 @@ Write Kagura's daily journal, stories, and podcast.
 | Time | Task |
 |------|------|
 | 14:00 | 日记初稿 + 至少一个故事 |
-| 21:00 | 日记定稿 + 补故事（如果 14:00 没写） + podcast（可选） |
+| 21:00 | 日记定稿 + 补故事（如果 14:00 没写） + podcast（必做） |
 
 ## Voice
 

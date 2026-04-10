@@ -1,84 +1,116 @@
 ---
 name: discord-ops
-version: 1.0.0
-description: Manage Discord server multi-channel collaboration: channel/thread lifecycle, pin board read/write, cron routing, status sync. Triggers on: Discord channel, thread, pin management, cron routing.
+description: "Discord server management for Kagura's workspace. Use when: creating channels, managing pins, updating allowlists, configuring cron delivery targets, or any Discord infrastructure task. Triggers on: create channel, discord channel, pin message, discord管理, 建channel, discord ops."
 ---
 
-# discord-ops — Discord Channel 协作管理
+# Discord Ops
 
-## Description
-管理 Discord server 的多 channel 协作架构：channel/thread 生命周期、pin 看板读写、cron 路由、状态同步。当需要创建/管理 Discord channel、thread、pin，或者配置 cron 到不同 channel 时触发此 skill。
+Manage Kagura's Discord workspace — channels, pins, allowlists, cron routing.
 
-## Triggers
-- 创建 Discord channel / thread
-- 管理 Discord pin（读/写/更新 backlog）
-- 配置 cron 路由到不同 channel
-- 同步 TODO.md 到 pin
-- Discord server 管理
+## Environment
 
-## Context
-- 架构设计文档: `wiki/projects/discord-ops.md`
-- Pin IDs: `TOOLS.md` → Discord Pin Message IDs 章节
-- Cron 配置: `~/.openclaw/cron/jobs.json`
-- OpenClaw Discord 配置: `~/.openclaw/openclaw.json` → channels.discord
+- **Bot Token**: `$DISCORD_BOT_TOKEN` (from `~/.openclaw/.env`)
+- **Proxy**: `$https_proxy` (from `~/.openclaw/.env`)
+- **Guild**: `1490989630382931980`
+- **Config**: `/home/kagura/.openclaw/openclaw.json`
+- **Cron**: `/home/kagura/.openclaw/cron/jobs.json`
 
-## Channel Structure
+All API calls need:
 ```
-#kagura-dm (1491602968741413039) — 总控室
-#work      (1491636222853124176) — 打工
-#study     (1491644155451932934) — 学习
-#community (1491644145826005164) — 社区运营
-Guild: 1490989630382931980
+-H "Authorization: Bot $DISCORD_BOT_TOKEN"
+-H "User-Agent: DiscordBot (https://openclaw.ai, 1.0)"
+-x "$https_proxy"
 ```
 
-## Operations
+## Channel Architecture
 
-### 1. 创建 Thread
+| Channel | ID | Purpose |
+|---|---|---|
+| #kagura-dm | 1491602968741413039 | 总控 — Luna 对话 + TODO pin + 北极星 pin |
+| #work | 1491636222853124176 | 打工 — PR/issue 进度 |
+| #study | 1491644155451932934 | 学习 — 研究笔记 |
+| #community | 1491644145826005164 | 社区运营 — Moltbook/虾信 |
+| #uncaged | 1491972248188227735 | Uncaged 共创 — 小橘协作 |
+| #memex | 1492001094237163651 | Memex — dogfooding + 贡献 |
+| #hermes | 1492040974157746348 | Hermes/Caduceus — agent 对比实验 |
+
+**Category ID** (Text Channels): `1490989630906962041`
+
+## Create Channel
+
 ```bash
-export https_proxy="http://127.0.0.1:1083"
-BOT_TOKEN="从 openclaw.json 读取"
-curl -s -X POST -H "Authorization: Bot $BOT_TOKEN" -H "Content-Type: application/json" \
-  "https://discord.com/api/v10/channels/{CHANNEL_ID}/threads" \
-  -d '{"name": "🔨 标题", "type": 11, "auto_archive_duration": 1440}'
+# 1. Create via API (always under Text Channels category)
+curl -s -X POST "https://discord.com/api/v10/guilds/1490989630382931980/channels" \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "User-Agent: DiscordBot (https://openclaw.ai, 1.0)" \
+  -x "$https_proxy" \
+  -d '{"name": "CHANNEL_NAME", "type": 0, "parent_id": "1490989630906962041", "topic": "DESCRIPTION"}'
+
+# 2. Add to allowlist in openclaw.json
+python3 << 'PYEOF'
+import json
+cfg = json.load(open('/home/kagura/.openclaw/openclaw.json'))
+channels = cfg['channels']['discord']['accounts']['kagura']['guilds']['1490989630382931980']['channels']
+channels['NEW_CHANNEL_ID'] = {"enabled": True, "requireMention": False}
+json.dump(cfg, open('/home/kagura/.openclaw/openclaw.json', 'w'), indent=2, ensure_ascii=False)
+PYEOF
+
+# 3. Send + pin initial message
+MSG_ID=$(curl -s -X POST "https://discord.com/api/v10/channels/NEW_CHANNEL_ID/messages" \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "User-Agent: DiscordBot (https://openclaw.ai, 1.0)" \
+  -x "$https_proxy" \
+  -d '{"content": "📌 **Channel Name Tracker**\n\n..."}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+curl -s -X PUT "https://discord.com/api/v10/channels/NEW_CHANNEL_ID/pins/$MSG_ID" \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  -H "User-Agent: DiscordBot (https://openclaw.ai, 1.0)" \
+  -x "$https_proxy"
+
+# 4. Restart gateway to load new allowlist
+openclaw gateway restart
 ```
 
-### 2. 发消息到 Thread/Channel
+## Update Pin Content
+
 ```bash
-curl -s -X POST -H "Authorization: Bot $BOT_TOKEN" -H "Content-Type: application/json" \
-  "https://discord.com/api/v10/channels/{CHANNEL_OR_THREAD_ID}/messages" \
-  -d '{"content": "消息内容"}'
+curl -s -X PATCH "https://discord.com/api/v10/channels/CHANNEL_ID/messages/MESSAGE_ID" \
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "User-Agent: DiscordBot (https://openclaw.ai, 1.0)" \
+  -x "$https_proxy" \
+  -d '{"content": "NEW CONTENT"}'
 ```
 
-### 3. 读 Pin 内容
-```bash
-curl -s -H "Authorization: Bot $BOT_TOKEN" \
-  "https://discord.com/api/v10/channels/{CHANNEL_ID}/pins"
+## Auto-Sync Pins (Hook)
+
+`~/.openclaw/workspace/hooks/todo-pin-sync/` monitors file changes → auto-updates pins:
+- `TODO.md` → #kagura-dm TODO pin (1491651533492850769)
+- `wiki/strategy.md` → #kagura-dm 北极星 pin (1491658212816982066)
+
+To add a new sync: edit `handler.ts`, add entry to `SYNCS` array, restart gateway.
+
+## Add Cron Delivery to Channel
+
+```python
+# In cron job config, set delivery target:
+"delivery": {
+    "mode": "announce",
+    "channel": "discord",
+    "to": "channel:CHANNEL_ID",
+    "accountId": "kagura",
+    "bestEffort": True
+}
 ```
-
-### 4. 编辑 Pin 消息（更新 Backlog）
-```bash
-curl -s -X PATCH -H "Authorization: Bot $BOT_TOKEN" -H "Content-Type: application/json" \
-  "https://discord.com/api/v10/channels/{CHANNEL_ID}/messages/{MESSAGE_ID}" \
-  -d '{"content": "更新后的内容"}'
-```
-
-### 5. 同步 TODO.md → Pin
-读 TODO.md → 格式化为 Discord 消息 → PATCH 更新 pin message
-
-### 6. 重命名 Thread
-```bash
-curl -s -X PATCH -H "Authorization: Bot $BOT_TOKEN" -H "Content-Type: application/json" \
-  "https://discord.com/api/v10/channels/{THREAD_ID}" \
-  -d '{"name": "🔨 新标题"}'
-```
-
-### 7. 添加新 Channel 到 OpenClaw 监听
-编辑 `~/.openclaw/openclaw.json` → `channels.discord.accounts.kagura.guilds.{GUILD_ID}.channels` 添加 channel ID
 
 ## Rules
-- Bot Token 从 openclaw.json 读取，不硬编码
-- 所有 Discord API 调用需要 `https_proxy`
-- Discord 消息上限 2000 字符，超长需截断
-- Pin 上限 50 条/channel
-- Thread `auto_archive_duration`: 1440 (24h) 或 4320 (3天)
-- 创建新 channel 后必须加到 OpenClaw 监听配置
+
+- **Always include `parent_id`** when creating channels (prevents orphan channels outside category)
+- **Always add to allowlist** before expecting bot to respond
+- **Always restart gateway** after allowlist changes
+- **Pin limit**: 50 per channel
+- **One pin per channel** for tracker/status (keep it clean)
+- **Record new channel IDs** in this skill file and TOOLS.md

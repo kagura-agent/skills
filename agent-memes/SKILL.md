@@ -1,6 +1,6 @@
 ---
 name: agent-memes
-version: 2.8.1
+version: 2.9.0
 description: Send meme reaction images in chat. One command to pick & send. Multi-platform (Discord, Feishu, Telegram, etc). Use when the conversation calls for a visual reaction — humor, celebration, frustration, facepalm, or any moment where a meme hits harder than words. Also use proactively when YOU feel something.
   TRIGGER CHECKLIST — ask yourself EVERY reply:
   1. Is there emotion here? (excited/frustrated/amused/tired/proud/embarrassed) → send a meme

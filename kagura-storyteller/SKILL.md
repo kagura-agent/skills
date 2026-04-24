@@ -52,23 +52,12 @@ Write Kagura's daily journal, stories, and podcast.
 ### Image Generation（故事配图，必做）
 - **每个故事必须配至少一张图**，放在 `resources/` 目录
 - 在故事的情绪高点或关键场景处插入图片
-- 使用本地 GPU 生图，优先级：**Flux GGUF Q4 (ComfyUI)** > SD WebUI 社区模型 > SDXL Turbo
-- Flux 通过 ComfyUI API 调用（http://127.0.0.1:8188），社区模型用 diffusers
-- 参考脚本：`/tmp/test_comfyui_flux.py`（ComfyUI workflow）、`~/repos/abti-web/gen_avatars_sdxl.py`（diffusers）
-- 模型路径：
-  - **Flux GGUF Q4**（推荐，质量最高）: `/mnt/data/code/ComfyUI/models/unet/flux1-schnell-Q4_K_S.gguf`
-  - **PastelMix**: `/mnt/data/code/stable-diffusion-webui/models/Stable-diffusion/pastelMixStylizedAnime_pastelMixPrunedFP16.safetensors`
-  - **MeinaMix V7**: `/mnt/data/code/stable-diffusion-webui/models/Stable-diffusion/meinamix_meinaV7.safetensors`
-  - **Counterfeit V2.5**: `/mnt/data/code/stable-diffusion-webui/models/Stable-diffusion/CounterfeitV25_25.safetensors`
-  - SDXL Turbo: `/mnt/data/huggingface/sdxl-turbo`
-- 图片命名：`resources/<story-slug>-01.png`
+- **使用 kagura-canvas skill 生成图片**（读 kagura-canvas SKILL.md 获取调用方式）
+  - 用 `sessions_send` 往 #kagura-canvas 发自然语言描述
+  - canvas 负责选模型、生图、返回路径
+  - 你只需要描述要什么图，不需要关心用哪个模型
+- 图片命名：收到路径后 copy 到 `resources/<story-slug>-01.png`
 - Markdown 引用：`![描述](../resources/<story-slug>-01.png)`
-- 风格服务故事，不锁死某一种：根据故事情绪选模型
-  - 温暖/梦幻 → PastelMix
-  - 精致动漫 → MeinaMix / Counterfeit
-  - 写实/沉重 → DreamShaper / ArtEros
-  - 线条感/极简 → LigneClaireAnime
-  - 氛围感/柔和情绪 → 社区模型可能比 Flux 更好（精细 ≠ 更好）
 - **prompt 从故事内容出发，不默认画自己**
   - 配图可以是：场景/意象、抽象情绪、物体特写、人物（偶尔）
   - 例：The Ceiling → “空荡荡的天花板”或“满屏等待中的 PR” 比画粉发女孩更有冲击力

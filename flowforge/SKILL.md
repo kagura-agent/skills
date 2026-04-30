@@ -7,6 +7,8 @@ description: "MANDATORY workflow runner for multi-step tasks. ANY task matching 
 
 Execute multi-step workflows defined in YAML files using the FlowForge state machine engine.
 
+> **COST OF NOT CALLING:** You skip steps. Ad-hoc execution always misses something — scout, reflect, verify. FlowForge exists because "I'll just do it manually" has failed repeatedly. Every time you bypass it, you're betting your memory is better than the workflow. It isn't.
+
 ## Prerequisites
 
 FlowForge CLI must be installed. Check with:

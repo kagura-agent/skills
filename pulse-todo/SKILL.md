@@ -7,6 +7,8 @@ description: "Unified task management and scheduling for AI agents. Use when: (1
 
 One list. All tasks. Every wake-up, check the pulse.
 
+> **COST OF NOT CALLING:** Commitments vanish. Tasks promised in conversation are forgotten by next session. Recurring work stops happening. Luna asks "didn't you say you'd do X?" and you have no record. Every untracked promise is a trust debt.
+
 ## Core Principle
 
 **Everything is a TODO.** Commitments, reminders, recurring checks, idle-time work — they're all tasks in one list. The difference is dependency and timing, not priority buckets.

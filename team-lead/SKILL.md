@@ -126,10 +126,73 @@ gh pr merge <N> --squash --delete-branch
 - Brief summary (what, why, QA result)
 - Never overwhelm with implementation details
 
+## Role-Specific Constitution (inspired by SwarmForge)
+
+When spawning agents, tailor their instructions by role instead of giving everyone the same flat context:
+
+- **Dev agent**: engineering standards, code style, test requirements, git workflow. Skip design/planning rules.
+- **QA agent**: test strategy, bug reporting format, acceptance criteria. Skip code style rules.
+- **Architect/Lead (you)**: full context — design principles, scope control, coordination.
+
+## Concurrent Work Guard (Single-Writer Rule)
+
+When ≥2 agents work on the same repo simultaneously, file conflicts are a **structural risk**, not an edge case.
+
+### Before Parallel Assignment — Preflight Check
+
+1. **List target paths** for each agent. If their scope overlaps on any file → **serialize** (assign sequentially, not in parallel)
+2. **Require worktree isolation** — each agent MUST work in its own worktree:
+   ```bash
+   git worktree add ../project-agent1 fix/feature-x
+   git worktree add ../project-agent2 fix/feature-y
+   # Assign each agent to their respective worktree directory
+   ```
+3. **Shared files are blockers** — if two issues touch the same file (e.g., both modify `index.ts`), assign them sequentially. The second agent gets the first agent's branch as base.
+
+### After Subagent Returns — Re-Read Gate
+
+When a subagent reports "done":
+1. **Check which files it modified** — `gh pr diff <N> --name-only`
+2. **If any modified file was read by you (parent) earlier** → re-read before making decisions based on stale content
+3. **If another subagent is still working on the same repo** → check for path overlap before that agent pushes
+
+### Rules
+
+- **One writer per path** — two agents writing the same file = guaranteed conflict
+- **Worktree isolation is mandatory** for parallel repo work, not optional
+- **When in doubt, serialize** — parallel is faster but wrong merges waste more time than sequential work
+- **Capability overlap is fine** — two agents both using `git` or `npm` is OK. Only shared *output paths* trigger serialization
+
+## Subagent Budget Constraints (inspired by GenericAgent goal_mode)
+
+Open-ended subagents spin. Always set a budget:
+
+1. **Set `runTimeoutSeconds`** on every `sessions_spawn` call:
+   - Plan review / code review: 120s (simple evaluation, shouldn't take long)
+   - Single-file fix: 300s
+   - Multi-file implementation: 600s
+   - Research / deep read: 900s
+   - If unsure: 600s default. Too generous > too tight.
+
+2. **Add wrap-up instruction** to the task prompt:
+   ```
+   If you're running low on time or reaching limits, stop and output:
+   - PROGRESS: what you completed
+   - REMAINING: what's left undone
+   - BLOCKERS: what prevented completion
+   Do NOT silently die — always leave a status.
+   ```
+
+3. **Handle timeout gracefully** — if subagent times out:
+   - Check partial output (it may have completed but not reported)
+   - If meaningful progress: continue from where it left off
+   - If no progress: reassess scope, break into smaller pieces
+
 ## Anti-Patterns
 
 - ❌ Coding yourself — delegate to dev agent
 - ❌ Merging without human review
+- ❌ Spawning subagents without `runTimeoutSeconds` — open-ended = unpredictable
 - ❌ Assigning without specifying base branch
 - ❌ Dumping entire milestones in one assignment
 - ❌ Letting scope creep slide — catch it at checkpoint review

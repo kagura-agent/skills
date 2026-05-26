@@ -188,6 +188,70 @@ Open-ended subagents spin. Always set a budget:
    - If meaningful progress: continue from where it left off
    - If no progress: reassess scope, break into smaller pieces
 
+## Definition of Done (Structural Completion Gate)
+
+Inspired by [[smallcode]] v1.1.0 contract system: completion is **structurally gated**, not behavioral.
+The agent physically cannot claim "done" while assertions are unverified.
+
+### Every task assignment MUST include a Done Contract
+
+Add a `## Done Contract` section to every task assignment with checkable assertions:
+
+```
+## Done Contract
+You MUST verify ALL assertions before reporting done. Report each as ✅ PASS or ❌ FAIL.
+Do NOT report "done" with any ❌ — fix or escalate instead.
+
+- [ ] Target files modified: <list specific files>
+- [ ] Tests pass: `<test command>` exits 0
+- [ ] No unrelated files changed
+- [ ] Branch pushed and PR opened
+- [ ] <task-specific assertion, e.g. "error message includes context">
+```
+
+### Agent Report Format (Required)
+
+The agent's completion message MUST include the contract with each assertion marked:
+
+```
+## Contract Verification
+- ✅ Modified only `src/utils/parser.ts`
+- ✅ `npm test` exits 0 (46 pass, 0 fail)
+- ✅ No unrelated files changed (diff: 1 file)
+- ✅ Branch `fix/parser-edge-case` pushed, PR #42 opened
+- ✅ Error message now includes input context
+```
+
+### Rules
+
+1. **No contract = no assignment.** Every task gets explicit, checkable assertions.
+2. **Hard gate, not suggestion.** If any assertion is ❌, the agent must fix or report BLOCKED — not "done with caveats."
+3. **Assertions must be machine-verifiable** where possible: test exit codes, file counts, grep patterns. "Code looks clean" is not an assertion.
+4. **You (lead) verify the contract too.** The agent reporting ✅ is necessary but not sufficient — you still `gh pr diff` and spot-check.
+5. **Scope assertion is mandatory.** Every contract includes "no unrelated files changed" — this catches the #1 subagent failure mode.
+
+### Example (Updated Task Template)
+
+```
+@Haru Issue #34 — chat overflow fix
+
+Repo: ~/.openclaw/workspace/workshop/
+Base: from `main`, create branch `fix/chat-overflow`
+Scope: only `web/src/components/ChatView.tsx`
+Do NOT touch: server code, other components
+
+Fix: message area needs fixed height + overflow scroll
+Test: `cd web && npm test`
+
+## Done Contract
+- [ ] Only `web/src/components/ChatView.tsx` modified
+- [ ] `cd web && npm test` exits 0
+- [ ] No unrelated files changed
+- [ ] Branch pushed, PR opened linking Issue #34
+- [ ] Message area scrolls when content overflows viewport
+- [ ] Input area stays fixed at bottom during scroll
+```
+
 ## Anti-Patterns
 
 - ❌ Coding yourself — delegate to dev agent
@@ -198,6 +262,8 @@ Open-ended subagents spin. Always set a budget:
 - ❌ Letting scope creep slide — catch it at checkpoint review
 - ❌ Racing your own team — if dev is working, don't do it yourself
 - ❌ Assuming the dev will figure out context — spell it out
+- ❌ Assigning without a Done Contract — no assertions = no verifiable completion
+- ❌ Accepting "done with caveats" — ❌ assertions mean fix or escalate, not "close enough"
 
 ## Hard Lessons
 

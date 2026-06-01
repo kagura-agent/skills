@@ -76,8 +76,9 @@ After dev reports "done":
 1. **Check the PR diff** — `gh pr diff <N> --name-only` first (scope check), then full diff
 2. **Verify scope** — only expected files changed? No unrelated code?
 3. **Code quality** — does the change make sense? Proper error handling?
-4. If issues found → send back with specific feedback
-5. If clean → assign to QA
+4. **Three-lens check** (when quality matters): review as user ("does this actually work for me?"), as code reviewer ("is this maintainable?"), and as attacker ("what breaks if inputs are weird?"). Skip for trivial fixes.
+5. If issues found → send back with specific feedback
+6. If clean → assign to QA
 
 ### 5. QA Assignment
 
@@ -118,6 +119,7 @@ gh pr merge <N> --squash --delete-branch
 
 ### Expect From Them
 - **One complete report** when done — not 4 short messages
+- **Separate deliverable from report**: the deliverable is the code/branch/PR (pure output). The report is status/decisions/issues found. Don't mix process evidence into deliverables (e.g., don't litter commit messages with "I tried X, it didn't work, so...").
 - Include: what they did, files changed, test results, PR link
 - If their messages are fragmented → update their SOUL.md
 
@@ -211,8 +213,9 @@ Do NOT report "done" with any ❌ — fix or escalate instead.
 
 ### Agent Report Format (Required)
 
-The agent's completion message MUST include the contract with each assertion marked:
+The agent's completion message MUST include:
 
+**1. Contract verification** (structured, checkable):
 ```
 ## Contract Verification
 - ✅ Modified only `src/utils/parser.ts`
@@ -221,6 +224,16 @@ The agent's completion message MUST include the contract with each assertion mar
 - ✅ Branch `fix/parser-edge-case` pushed, PR #42 opened
 - ✅ Error message now includes input context
 ```
+
+**2. Report** (what happened, decisions, issues — separate from the deliverable):
+```
+## Report
+- Approach: <what you did and why>
+- Decisions: <any non-obvious choices made>
+- Issues found: <anything unexpected, even if resolved>
+```
+
+Keep process evidence in the report, not in code/commits/PR descriptions. The deliverable should stand on its own.
 
 ### Rules
 

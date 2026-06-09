@@ -242,6 +242,7 @@ Keep process evidence in the report, not in code/commits/PR descriptions. The de
 3. **Assertions must be machine-verifiable** where possible: test exit codes, file counts, grep patterns. "Code looks clean" is not an assertion.
 4. **You (lead) verify the contract too.** The agent reporting ✅ is necessary but not sufficient — you still `gh pr diff` and spot-check.
 5. **Scope assertion is mandatory.** Every contract includes "no unrelated files changed" — this catches the #1 subagent failure mode.
+6. **External operations must be API-verified.** If the subagent claims it performed an external action (unassign, merge, close, comment, label, deploy), verify with the actual API (`gh issue view`, `gh pr view`, etc.) before recording as done. Subagent text claims are not evidence — only API state is truth. (Lesson: #3836 false unassign went undetected for days)
 
 ### Example (Updated Task Template)
 

@@ -11,13 +11,17 @@ MEMES_CONFIG="${MEMES_CONFIG:-$HOME/.config/memes/config}"
 # Auto-detect channel + target from OpenClaw runtime context file
 # Format: "platform:target" e.g. "telegram:12345" or "discord:98765" or just "telegram"
 OPENCLAW_CHANNEL_FILE="${OPENCLAW_CHANNEL_FILE:-/tmp/openclaw-current-channel}"
-if [[ -f "$OPENCLAW_CHANNEL_FILE" ]]; then
-  _ctx=$(cat "$OPENCLAW_CHANNEL_FILE")
-  if [[ "$_ctx" == *:* ]]; then
-    : "${OPENCLAW_CHANNEL:=${_ctx%%:*}}"
-    : "${MEMES_CURRENT_TARGET:=${_ctx#*:}}"
-  else
-    : "${OPENCLAW_CHANNEL:=$_ctx}"
+if [[ -z "${OPENCLAW_CHANNEL:-}" && -f "$OPENCLAW_CHANNEL_FILE" ]]; then
+  # Only use file if it's less than 5 minutes old (300 seconds)
+  _file_age=$(( $(date +%s) - $(stat -c %Y "$OPENCLAW_CHANNEL_FILE" 2>/dev/null || echo 0) ))
+  if [[ $_file_age -lt 300 ]]; then
+    _ctx=$(cat "$OPENCLAW_CHANNEL_FILE")
+    if [[ "$_ctx" == *:* ]]; then
+      OPENCLAW_CHANNEL="${_ctx%%:*}"
+      MEMES_CURRENT_TARGET="${_ctx#*:}"
+    else
+      OPENCLAW_CHANNEL="$_ctx"
+    fi
   fi
 fi
 # Auto-detect scripts dir: same directory as this script, or override with MEMES_SCRIPTS
@@ -82,6 +86,12 @@ cmd_pick() {
     [迷惑]=confused [懵]=confused
     [摊手]=shrug [无奈]=shrug [没办法]=shrug [随便]=shrug
     [干活]=working [忙]=working [在搞]=working [coding]=working
+    [失望]=disappointed [唉]=disappointed
+    [得意]=smug [嘚瑟]=smug [heh]=smug
+    [吃瓜]=popcorn [看戏]=popcorn
+    [等]=waiting [等等]=waiting [等待]=waiting
+    [牛]=nailed-it [完美]=nailed-it [nice]=nailed-it
+    [无语子]=bruh [真的假的]=bruh [离谱]=bruh
   )
   category="${ALIASES[$category]:-$category}"
   local dir="$MEMES_DIR/$category"
@@ -108,6 +118,37 @@ cmd_list() {
 }
 
 cmd_random() {
+  local tags_file="$MEMES_DIR/tags.json"
+  # Inverse-sqrt weighted random: categories with fewer files get boosted,
+  # so cute-animals (30 files) doesn't dominate random picks.
+  # Weight = 1000/sqrt(count), quantized to integers for bash arithmetic.
+  if command -v jq &>/dev/null && [[ -f "$tags_file" ]]; then
+    local -a cats=() weights=()
+    local total_weight=0
+    while IFS='=' read -r name count; do
+      [[ -z "$name" || -z "$count" ]] && continue
+      cats+=("$name")
+      # inverse-sqrt: 1000/sqrt(count), min 1
+      local w; w=$(awk "BEGIN{v=int(1000/sqrt($count)); print (v<1?1:v)}")
+      weights+=("$w")
+      total_weight=$((total_weight + w))
+    done < <(jq -r '._meta.categoryCounts // {} | to_entries[] | "\(.key)=\(.value)"' "$tags_file")
+    if [[ ${#cats[@]} -gt 0 && $total_weight -gt 0 ]]; then
+      local roll=$((RANDOM % total_weight))
+      local cumulative=0
+      for i in "${!cats[@]}"; do
+        cumulative=$((cumulative + weights[i]))
+        if [[ $roll -lt $cumulative ]]; then
+          cmd_pick "${cats[$i]}"
+          return
+        fi
+      done
+      # Fallback (shouldn't reach here)
+      cmd_pick "${cats[-1]}"
+      return
+    fi
+  fi
+  # Fallback: uniform random (no jq or no tags.json)
   local cats=()
   for dir in "$MEMES_DIR"/*/; do
     [[ -d "$dir" ]] || continue
@@ -163,6 +204,16 @@ cmd_send() {
         timeout "$SEND_TIMEOUT" node "$script" "$target" "$meme_path" ${caption:+"$caption"}
       else
         _send_openclaw "$meme_path" "$caption" "$to" "feishu" "$account"
+      fi
+      ;;
+    line)
+      local script="$SCRIPTS_DIR/line-send-image.sh"
+      local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_LINE:-}}}"
+      [[ -z "$target" ]] && { echo "Error: --to <user_or_group_id> required (or set MEMES_DEFAULT_LINE)" >&2; exit 1; }
+      if [[ -x "$script" ]]; then
+        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption"
+      else
+        _send_openclaw "$meme_path" "$caption" "$to" "line" "$account"
       fi
       ;;
     telegram)

@@ -1,6 +1,6 @@
 ---
 name: agent-memes
-version: 2.9.1
+version: 2.10.0
 description: Send meme reaction images in chat. One command to pick & send. Multi-platform (Discord, Feishu, Telegram, etc). Use when the conversation calls for a visual reaction — humor, celebration, frustration, facepalm, or any moment where a meme hits harder than words. Also use proactively when YOU feel something.
   TRIGGER CHECKLIST — ask yourself EVERY reply:
   1. Is there emotion here? (excited/frustrated/amused/tired/proud/embarrassed) → send a meme
@@ -23,6 +23,10 @@ memes send feishu cute-animals "看猫！" --to user:xxx  # Send via Feishu
 memes send telegram wow "哇！"                # Send via Telegram
 memes pick happy                               # Just pick, get path (no send)
 memes categories                               # List all categories
+memes stats                                    # Usage frequency per category
+memes search <query>                           # Fuzzy tag search across all memes
+memes audit [min]                              # Health check: file counts + tag coverage
+memes trending [days]                          # Compare recent vs previous period usage
 ```
 
 **One command. Zero friction.** That's the point.
@@ -101,7 +105,7 @@ bash ~/.openclaw/workspace/skills/agent-memes/scripts/setup.sh
 
 That's it! `setup.sh` handles everything: git lfs, meme library clone, CLI install, permissions.
 
-## Categories (187 memes, 26 categories)
+## Categories (199 memes, 26 categories)
 
 approve · bruh · confused · cute-animals · debug-mood · disappointed · encourage · facepalm · greeting-bye · greeting-hello · greeting-morning · greeting-night · happy · love · nailed-it · panic · popcorn · sad · shrug · smug · thanks · thinking · tired · waiting · working · wow
 

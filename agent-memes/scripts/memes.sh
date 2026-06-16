@@ -38,6 +38,11 @@ Commands:
   random                  Pick from any category at random
   send <category> [caption] [--to target] [--channel platform] [--account name]
   categories              List all categories with counts
+  stats                   Show usage stats from tracker (frequency, last-used)
+  search <query>          Search memes by tags (fuzzy cross-category match)
+  backfill-files          Fill missing 'file' field in old tracker entries
+  audit [min_files]       Check category health and tag coverage (default min: 3)
+  health                  Combined health check: audit + tracker integrity + oversized files
 
 Platforms with fast send: discord, feishu, telegram
 Other platforms fall back to: openclaw message send
@@ -61,10 +66,9 @@ cmd_categories() {
   done | sort
 }
 
-cmd_pick() {
-  local category="${1:-}"
-  [[ -z "$category" ]] && { echo "Usage: memes pick <category>" >&2; exit 1; }
-  # Alias mapping (Chinese/common names → folder names)
+# Resolve alias/Chinese name to canonical category folder name
+_resolve_category() {
+  local cat="${1:-}"
   declare -A ALIASES=(
     [哇]=wow [惊讶]=wow [surprised]=wow
     [开心]=happy [高兴]=happy [庆祝]=happy [celebrate]=happy
@@ -93,12 +97,40 @@ cmd_pick() {
     [牛]=nailed-it [完美]=nailed-it [nice]=nailed-it
     [无语子]=bruh [真的假的]=bruh [离谱]=bruh
   )
-  category="${ALIASES[$category]:-$category}"
+  echo "${ALIASES[$cat]:-$cat}"
+}
+
+cmd_pick() {
+  local category="${1:-}"
+  [[ -z "$category" ]] && { echo "Usage: memes pick <category>" >&2; exit 1; }
+  category=$(_resolve_category "$category")
   local dir="$MEMES_DIR/$category"
   [[ ! -d "$dir" ]] && { echo "Error: Category '$category' not found. Run 'memes categories' for list." >&2; exit 1; }
   local files=()
   while IFS= read -r f; do files+=("$f"); done < <(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.jpg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null)
   [[ ${#files[@]} -eq 0 ]] && { echo "Error: No memes in '$category'" >&2; exit 1; }
+
+  # Per-file recency avoidance: skip files picked recently in this category
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  local file_recency=${MEMES_FILE_RECENCY_WINDOW:-5}
+  if command -v jq &>/dev/null && [[ -f "$tracker_file" ]] && [[ ${#files[@]} -gt 1 ]]; then
+    local -A recent_files=()
+    while read -r fname; do
+      [[ -n "$fname" ]] && recent_files["$fname"]=1
+    done < <(jq -r --arg cat "$category" --argjson n "$file_recency" '
+      [.history[] | select(.category == $cat and .file != null) | .file]
+      | .[-$n:][]' "$tracker_file" 2>/dev/null)
+    if [[ ${#recent_files[@]} -gt 0 ]]; then
+      local filtered=()
+      for f in "${files[@]}"; do
+        local basename_f; basename_f=$(basename "$f")
+        [[ -z "${recent_files[$basename_f]:-}" ]] && filtered+=("$f")
+      done
+      # Only use filtered list if it's non-empty (avoid deadlock when all files recently used)
+      [[ ${#filtered[@]} -gt 0 ]] && files=("${filtered[@]}")
+    fi
+  fi
+
   local picked="${files[$((RANDOM % ${#files[@]}))]}"
   # Detect git LFS pointer (not real image)
   if [[ $(stat -c%s "$picked" 2>/dev/null || stat -f%z "$picked" 2>/dev/null) -lt 1024 ]] && grep -q 'oid sha256' "$picked" 2>/dev/null; then
@@ -119,14 +151,28 @@ cmd_list() {
 
 cmd_random() {
   local tags_file="$MEMES_DIR/tags.json"
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  local recency_window=${MEMES_RECENCY_WINDOW:-3}
+
+  # Build recency skip list from last N tracker entries
+  local -A recent_cats=()
+  if command -v jq &>/dev/null && [[ -f "$tracker_file" ]]; then
+    while read -r cat; do
+      [[ -n "$cat" ]] && recent_cats["$cat"]=1
+    done < <(jq -r --argjson n "$recency_window" '[.history[-$n:][].category // empty] | unique[]' "$tracker_file" 2>/dev/null)
+  fi
+
   # Inverse-sqrt weighted random: categories with fewer files get boosted,
   # so cute-animals (30 files) doesn't dominate random picks.
   # Weight = 1000/sqrt(count), quantized to integers for bash arithmetic.
+  # Recent categories (last $recency_window sends) are skipped for variety.
   if command -v jq &>/dev/null && [[ -f "$tags_file" ]]; then
     local -a cats=() weights=()
     local total_weight=0
     while IFS='=' read -r name count; do
       [[ -z "$name" || -z "$count" ]] && continue
+      # Skip recently used categories
+      [[ -n "${recent_cats[$name]:-}" ]] && continue
       cats+=("$name")
       # inverse-sqrt: 1000/sqrt(count), min 1
       local w; w=$(awk "BEGIN{v=int(1000/sqrt($count)); print (v<1?1:v)}")
@@ -160,6 +206,147 @@ cmd_random() {
   cmd_pick "$cat"
 }
 
+cmd_stats() {
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for stats" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  local total; total=$(jq '.history | length' "$tracker_file")
+  local first_date; first_date=$(jq -r '.history[0].time // "unknown"' "$tracker_file" | cut -c1-10)
+  local last_date; last_date=$(jq -r '.history[-1].time // "unknown"' "$tracker_file" | cut -c1-10)
+
+  echo "=== Meme Stats ==="
+  echo "Total sends: $total  |  Period: $first_date → $last_date"
+  echo ""
+
+  # Category frequency + last-used
+  echo "Category               Count  Last Used"
+  echo "─────────────────────  ─────  ──────────"
+  jq -r '
+    [.history[] | {cat: .category, ts: (.time // "")}]
+    | group_by(.cat)
+    | map({cat: .[0].cat, count: length, last: (map(.ts) | sort | last | .[0:10])})
+    | sort_by(-.count)
+    | .[] | "\(.cat)\t\(.count)\t\(.last)"
+  ' "$tracker_file" | while IFS=$'\t' read -r cat count last; do
+    printf "%-23s %5s  %s\n" "$cat" "$count" "$last"
+  done
+
+  echo ""
+
+  # Top 3 most used
+  echo "🔥 Most used:"
+  jq -r '
+    [.history[].category] | group_by(.) | map({cat: .[0], n: length})
+    | sort_by(-.n) | .[0:3][] | "   \(.cat) (\(.n))"
+  ' "$tracker_file"
+
+  # Bottom 3 least used
+  echo "❄️  Least used:"
+  jq -r '
+    [.history[].category] | group_by(.) | map({cat: .[0], n: length})
+    | sort_by(.n) | .[0:3][] | "   \(.cat) (\(.n))"
+  ' "$tracker_file"
+
+  # Categories in library but never sent
+  echo ""
+  local -a lib_cats=()
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir"); [[ "$name" == .* ]] && continue
+    lib_cats+=("$name")
+  done
+  local used_cats; used_cats=$(jq -r '[.history[].category] | unique | .[]' "$tracker_file")
+  local missing=0
+  for cat in "${lib_cats[@]}"; do
+    if ! echo "$used_cats" | grep -qx "$cat"; then
+      [[ $missing -eq 0 ]] && echo "⚠️  In library but never sent:"
+      echo "   $cat"
+      missing=$((missing + 1))
+    fi
+  done
+  [[ $missing -eq 0 ]] && echo "✅ All library categories have been used"
+
+  # Style diversity per category (reads _styles from tags.json)
+  local tags_file="$MEMES_DIR/tags.json"
+  if [[ -f "$tags_file" ]] && jq -e '._styles' "$tags_file" &>/dev/null; then
+    echo ""
+    echo "🎨 Style Diversity"
+    echo "Category               anime  animal  cartoon  live  meme   Dominant"
+    echo "─────────────────────  ─────  ──────  ───────  ────  ─────  ────────────"
+    local flagged=0
+    jq -r '
+      ._styles as $s |
+      [$s | to_entries[] | {cat: (.key | split("/")[0]), style: .value}]
+      | group_by(.cat)
+      | map({
+          cat: .[0].cat,
+          total: length,
+          anime:    [.[] | select(.style=="anime")] | length,
+          animal:   [.[] | select(.style=="animal")] | length,
+          cartoon:  [.[] | select(.style=="cartoon")] | length,
+          live:     [.[] | select(.style=="live-action")] | length,
+          meme:     [.[] | select(.style=="meme")] | length
+        })
+      | map(. + {
+          top_style: ([ {s:"anime",n:.anime}, {s:"animal",n:.animal}, {s:"cartoon",n:.cartoon}, {s:"live-action",n:.live}, {s:"meme",n:.meme} ] | sort_by(-.n) | .[0]),
+          pct: (([ .anime, .animal, .cartoon, .live, .meme ] | max) * 100 / .total | floor)
+        })
+      | sort_by(.cat)
+      | .[] | "\(.cat)\t\(.anime)\t\(.animal)\t\(.cartoon)\t\(.live)\t\(.meme)\t\(.pct | floor)% \(.top_style.s)\(if .pct > 70 then " ⚠️" else "" end)"
+    ' "$tags_file" | while IFS=$'\t' read -r cat anime animal cartoon live meme dominant; do
+      printf "%-23s %5s  %6s  %7s  %4s  %5s  %s\n" "$cat" "$anime" "$animal" "$cartoon" "$live" "$meme" "$dominant"
+      if [[ "$dominant" == *"⚠️"* ]]; then
+        flagged=$((flagged + 1))
+      fi
+    done
+    echo ""
+    # Count flagged categories
+    local flag_count
+    flag_count=$(jq '[
+      ._styles as $s |
+      [$s | to_entries[] | {cat: (.key | split("/")[0]), style: .value}]
+      | group_by(.cat)
+      | .[] | {
+          total: length,
+          max: ([group_by(.style) | .[] | length] | max)
+        }
+      | select((.max * 100 / .total) > 70)
+    ] | length' "$tags_file")
+    if [[ "$flag_count" -gt 0 ]]; then
+      echo "⚠️  $flag_count categories have >70% single-style dominance"
+    else
+      echo "✅ All categories have good style diversity"
+    fi
+  fi
+}
+
+_track_send() {
+  local category="$1" file="$2" channel="$3" caption="$4" result="${5:-success}"
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  command -v jq &>/dev/null || return 0
+  local ts; ts=$(date -Iseconds)
+  local basename_f; basename_f=$(basename "$file")
+  local entry; entry=$(jq -nc \
+    --arg ts "$ts" \
+    --arg cat "$category" \
+    --arg file "$basename_f" \
+    --arg ch "$channel" \
+    --arg cap "$caption" \
+    --arg res "$result" \
+    '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, method: "memes send"}')
+  if [[ -f "$tracker_file" ]]; then
+    local tmp; tmp=$(mktemp)
+    jq --argjson e "$entry" --arg ts "$ts" '.history += [$e] | .totalSent = (.history | length) | .lastUpdated = $ts' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
+  else
+    echo "$entry" | jq '{history: [.], totalSent: 1}' > "$tracker_file"
+  fi
+}
+
 cmd_send() {
   local category="" caption="" to="" channel="${OPENCLAW_CHANNEL:-discord}" account=""
   # Detect platform as first arg (overrides env default)
@@ -176,12 +363,16 @@ cmd_send() {
   done
   [[ -z "$category" ]] && { echo "Usage: memes send <category> [caption] [--to target] [--channel platform]" >&2; exit 1; }
 
+  # Resolve alias so tracker records canonical category, not alias
+  category=$(_resolve_category "$category")
+
   local meme_path; meme_path=$(cmd_pick "$category")
 
   # Timeout for send commands (prevents SIGKILL from parent exec timeout)
   local SEND_TIMEOUT="${MEMES_SEND_TIMEOUT:-30}"
 
   # Try platform-specific fast script first, fall back to openclaw CLI
+  local send_rc=0
   case "$channel" in
     discord)
       local script="$SCRIPTS_DIR/discord-send-image.sh"
@@ -191,9 +382,9 @@ cmd_send() {
         [[ -z "$target" ]] && { echo "Error: --to <channel_id> required (or set MEMES_DEFAULT_CHANNEL)" >&2; exit 1; }
       fi
       if [[ -x "$script" ]]; then
-        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption"
+        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" || send_rc=$?
       else
-        _send_openclaw "$meme_path" "$caption" "$to" "$channel" "$account"
+        _send_openclaw "$meme_path" "$caption" "$to" "$channel" "$account" || send_rc=$?
       fi
       ;;
     feishu)
@@ -201,9 +392,9 @@ cmd_send() {
       local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_FEISHU:-}}}"
       [[ -z "$target" ]] && { echo "Error: --to <target> required (or set MEMES_DEFAULT_FEISHU)" >&2; exit 1; }
       if [[ -f "$script" ]]; then
-        timeout "$SEND_TIMEOUT" node "$script" "$target" "$meme_path" ${caption:+"$caption"}
+        timeout "$SEND_TIMEOUT" node "$script" "$target" "$meme_path" ${caption:+"$caption"} || send_rc=$?
       else
-        _send_openclaw "$meme_path" "$caption" "$to" "feishu" "$account"
+        _send_openclaw "$meme_path" "$caption" "$to" "feishu" "$account" || send_rc=$?
       fi
       ;;
     line)
@@ -211,9 +402,9 @@ cmd_send() {
       local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_LINE:-}}}"
       [[ -z "$target" ]] && { echo "Error: --to <user_or_group_id> required (or set MEMES_DEFAULT_LINE)" >&2; exit 1; }
       if [[ -x "$script" ]]; then
-        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption"
+        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" || send_rc=$?
       else
-        _send_openclaw "$meme_path" "$caption" "$to" "line" "$account"
+        _send_openclaw "$meme_path" "$caption" "$to" "line" "$account" || send_rc=$?
       fi
       ;;
     telegram)
@@ -221,22 +412,28 @@ cmd_send() {
       local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_TELEGRAM:-}}}"
       [[ -z "$target" ]] && { echo "Error: --to <chat_id> required (or set MEMES_DEFAULT_TELEGRAM)" >&2; exit 1; }
       if [[ -x "$script" ]]; then
-        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption"
+        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" || send_rc=$?
       else
-        _send_openclaw "$meme_path" "$caption" "$to" "telegram" "$account"
+        _send_openclaw "$meme_path" "$caption" "$to" "telegram" "$account" || send_rc=$?
       fi
       ;;
     *)
       local script="$SCRIPTS_DIR/${channel}-send-image.sh"
       if [[ -x "$script" ]]; then
-        timeout "$SEND_TIMEOUT" bash "$script" "${to:-}" "$meme_path" "$caption"
+        timeout "$SEND_TIMEOUT" bash "$script" "${to:-}" "$meme_path" "$caption" || send_rc=$?
       else
-        _send_openclaw "$meme_path" "$caption" "$to" "$channel" "$account"
+        _send_openclaw "$meme_path" "$caption" "$to" "$channel" "$account" || send_rc=$?
       fi
       ;;
   esac
 
+  # Track the send in meme-tracker.json (even on send failure, to record the attempt)
+  local result="success"
+  [[ $send_rc -ne 0 ]] && result="failed"
+  _track_send "$category" "$meme_path" "$channel" "$caption" "$result"
+
   echo "$meme_path"
+  return $send_rc
 }
 
 _send_openclaw() {
@@ -251,13 +448,444 @@ _send_openclaw() {
   timeout "$send_timeout" bash -c "$cmd" 2>&1
 }
 
+cmd_search() {
+  local query="${1:-}"
+  [[ -z "$query" ]] && { echo "Usage: memes search <query>" >&2; echo "Examples: memes search coding, memes search cute sad, memes search fire chaos" >&2; exit 1; }
+  local tags_file="$MEMES_DIR/tags.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for search" >&2; exit 1
+  fi
+  [[ ! -f "$tags_file" ]] && { echo "Error: No tags.json at $tags_file" >&2; exit 1; }
+
+  # Split query into words, match against tags
+  local -a query_words=()
+  for word in $query; do
+    query_words+=("$(echo "$word" | tr '[:upper:]' '[:lower:]')")
+  done
+
+  # Score each file: count how many query words match any of its tags (substring match)
+  local results; results=$(jq -r --arg q "${query_words[*]}" '
+    ($q | split(" ")) as $words |
+    to_entries
+    | map(select(.key != "_meta" and (.value | type == "array")))
+    | map({
+        file: .key,
+        cat: (.key | split("/")[0]),
+        tags: .value,
+        score: ([.value[] as $tag | $words[] as $w | select($tag | test($w; "i"))] | length)
+      })
+    | map(select(.score > 0))
+    | sort_by(-.score)
+    | .[:15]
+    | .[] | "\(.score)\t\(.cat)\t\(.file)\t\(.tags | join(", "))"
+  ' "$tags_file" 2>/dev/null)
+
+  if [[ -z "$results" ]]; then
+    echo "No matches for: $query" >&2
+    echo "Try broader terms or run 'memes categories' for available categories" >&2
+    return 1
+  fi
+
+  echo "Search: $query"
+  echo "Score  Category               File"
+  echo "─────  ─────────────────────  ──────────────────────────"
+  echo "$results" | while IFS=$'\t' read -r score cat file tags; do
+    local basename_f; basename_f=$(basename "$file")
+    printf "%-6s %-23s %s\n" "$score" "$cat" "$basename_f"
+  done
+  echo ""
+  echo "Tags matched in top result:"
+  echo "$results" | head -1 | while IFS=$'\t' read -r score cat file tags; do
+    echo "  $tags"
+  done
+}
+
+cmd_backfill_files() {
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for backfill-files" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  local missing; missing=$(jq '[.history[] | select(.file == null or .file == "")] | length' "$tracker_file")
+  local total; total=$(jq '.history | length' "$tracker_file")
+
+  if [[ "$missing" -eq 0 ]]; then
+    echo "✅ All $total entries already have file field"
+    return 0
+  fi
+
+  echo "Found $missing/$total entries missing file field"
+
+  # For entries with missing file: if the category has exactly 1 file, we can infer it.
+  # Otherwise mark as "legacy" (unknowable — random pick wasn't recorded).
+  local tmp; tmp=$(mktemp)
+  jq --arg memes_dir "$MEMES_DIR" '
+    .history |= [.[] | 
+      if (.file == null or .file == "") then
+        .file = "legacy"
+      else . end
+    ]
+  ' "$tracker_file" > "$tmp"
+
+  # Try to infer single-file categories
+  local inferred=0
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local cat; cat=$(basename "$dir")
+    [[ "$cat" == .* ]] && continue
+    local files; files=$(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.jpg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null)
+    local count; count=$(echo "$files" | grep -c . 2>/dev/null || echo 0)
+    if [[ "$count" -eq 1 ]]; then
+      local fname; fname=$(basename "$files")
+      local cat_inferred; cat_inferred=$(jq --arg cat "$cat" --arg fname "$fname" '
+        [.history[] | select(.category == $cat and .file == "legacy")] | length
+      ' "$tmp")
+      if [[ "$cat_inferred" -gt 0 ]]; then
+        jq --arg cat "$cat" --arg fname "$fname" '
+          .history |= [.[] |
+            if (.category == $cat and .file == "legacy") then .file = $fname
+            else . end
+          ]
+        ' "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
+        inferred=$((inferred + cat_inferred))
+        echo "  📎 $cat → $fname ($cat_inferred entries)"
+      fi
+    fi
+  done
+
+  local legacy=$((missing - inferred))
+  mv "$tmp" "$tracker_file"
+  echo ""
+  echo "Results:"
+  echo "  Inferred: $inferred entries (single-file categories)"
+  echo "  Legacy:   $legacy entries (marked as 'legacy' — original pick unknowable)"
+  echo "  Total:    $missing entries backfilled"
+}
+
+cmd_audit() {
+  local min_files=${1:-3}
+  echo "=== Meme Audit (min $min_files files per category) ==="
+  echo ""
+
+  local total_cats=0 low_cats=0 empty_cats=0 ok_cats=0
+  local -a low_list=() empty_list=()
+
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* ]] && continue
+    total_cats=$((total_cats + 1))
+
+    local count; count=$(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | wc -l)
+
+    if [[ $count -eq 0 ]]; then
+      empty_cats=$((empty_cats + 1))
+      empty_list+=("$name")
+    elif [[ $count -lt $min_files ]]; then
+      low_cats=$((low_cats + 1))
+      low_list+=("$name ($count files)")
+    else
+      ok_cats=$((ok_cats + 1))
+    fi
+  done
+
+  # Check for tag coverage
+  local tags_file="$MEMES_DIR/tags.json"
+  local untagged=0
+  local -a untagged_list=()
+  if [[ -f "$tags_file" ]] && command -v jq &>/dev/null; then
+    for dir in "$MEMES_DIR"/*/; do
+      [[ -d "$dir" ]] || continue
+      local name; name=$(basename "$dir")
+      [[ "$name" == .* ]] && continue
+      local files; files=$(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) -printf '%f\n')
+      while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local key="$name/$f"
+        local has_tags; has_tags=$(jq -r --arg key "$key" 'if .[$key] then (.[$key] | length) else 0 end' "$tags_file" 2>/dev/null || echo 0)
+        if [[ "$has_tags" == "0" || -z "$has_tags" ]]; then
+          untagged=$((untagged + 1))
+          untagged_list+=("$key")
+        fi
+      done <<< "$files"
+    done
+  fi
+
+  # Summary
+  echo "Category health:"
+  echo "  ✅ $ok_cats categories OK (≥$min_files files)"
+  if [[ $low_cats -gt 0 ]]; then
+    echo "  ⚠️  $low_cats categories LOW variety:"
+    for item in "${low_list[@]}"; do
+      echo "     → $item"
+    done
+  fi
+  if [[ $empty_cats -gt 0 ]]; then
+    echo "  ❌ $empty_cats categories EMPTY:"
+    for item in "${empty_list[@]}"; do
+      echo "     → $item"
+    done
+  fi
+  echo "  Total: $total_cats categories"
+  echo ""
+
+  # Tag coverage
+  if [[ -f "$tags_file" ]]; then
+    if [[ $untagged -gt 0 ]]; then
+      echo "Tag coverage:"
+      echo "  ⚠️  $untagged files missing tags:"
+      local shown=0
+      for item in "${untagged_list[@]}"; do
+        echo "     → $item"
+        shown=$((shown + 1))
+        [[ $shown -ge 10 ]] && { echo "     ... and $((untagged - shown)) more"; break; }
+      done
+    else
+      echo "Tag coverage: ✅ all files tagged"
+    fi
+  else
+    echo "Tag coverage: ⚠️  No tags.json found"
+  fi
+  echo ""
+
+  # Total file count
+  local total_files; total_files=$(find "$MEMES_DIR" -mindepth 2 -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | wc -l)
+  echo "Total meme files: $total_files"
+
+  # Exit code: 0 if healthy, 1 if issues found
+  [[ $low_cats -eq 0 && $empty_cats -eq 0 ]] && return 0 || return 1
+}
+
+cmd_trending() {
+  local days=${1:-7}
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for trending" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  # Calculate date boundaries
+  local now_epoch; now_epoch=$(date +%s)
+  local recent_start; recent_start=$(date -d "@$((now_epoch - days * 86400))" +%Y-%m-%d)
+  local prev_start; prev_start=$(date -d "@$((now_epoch - days * 2 * 86400))" +%Y-%m-%d)
+  local today; today=$(date +%Y-%m-%d)
+
+  echo "=== Meme Trending (${days}d windows) ==="
+  echo "Recent:   $recent_start → $today"
+  echo "Previous: $prev_start → $(date -d "@$((now_epoch - days * 86400 - 86400))" +%Y-%m-%d)"
+  echo ""
+
+  # jq: count per category in each window, compute delta
+  jq -r --arg rs "$recent_start" --arg ps "$prev_start" --arg td "$today" '
+    def date_of: (. // "")[0:10];
+    [.history[] | {cat: .category, d: ((.time // "") | date_of)}] |
+    group_by(.cat) | map({
+      cat: .[0].cat,
+      recent: [.[] | select(.d >= $rs and .d <= $td)] | length,
+      prev:   [.[] | select(.d >= $ps and .d < $rs)] | length
+    }) |
+    map(. + {delta: (.recent - .prev)}) |
+    sort_by(-.delta) |
+    .[] | "\(.cat)\t\(.recent)\t\(.prev)\t\(.delta)"
+  ' "$tracker_file" | {
+    echo "Category               Recent  Prev  Delta"
+    echo "─────────────────────  ──────  ────  ─────"
+    while IFS=$'\t' read -r cat recent prev delta; do
+      local arrow=""
+      if [[ $delta -gt 0 ]]; then arrow="📈 +$delta"
+      elif [[ $delta -lt 0 ]]; then arrow="📉 $delta"
+      else arrow="  ─"
+      fi
+      printf "%-23s %6s  %4s  %s\n" "$cat" "$recent" "$prev" "$arrow"
+    done
+  }
+
+  echo ""
+
+  # Highlight top risers and fallers
+  local top_riser; top_riser=$(jq -r --arg rs "$recent_start" --arg ps "$prev_start" --arg td "$today" '
+    def date_of: (. // "")[0:10];
+    [.history[] | {cat: .category, d: ((.time // "") | date_of)}] |
+    group_by(.cat) | map({
+      cat: .[0].cat,
+      recent: [.[] | select(.d >= $rs and .d <= $td)] | length,
+      prev:   [.[] | select(.d >= $ps and .d < $rs)] | length
+    }) |
+    map(. + {delta: (.recent - .prev)}) |
+    sort_by(-.delta) | .[0] |
+    if .delta > 0 then "🔥 Rising: \(.cat) (+\(.delta))" else "No risers" end
+  ' "$tracker_file")
+
+  local top_faller; top_faller=$(jq -r --arg rs "$recent_start" --arg ps "$prev_start" --arg td "$today" '
+    def date_of: (. // "")[0:10];
+    [.history[] | {cat: .category, d: ((.time // "") | date_of)}] |
+    group_by(.cat) | map({
+      cat: .[0].cat,
+      recent: [.[] | select(.d >= $rs and .d <= $td)] | length,
+      prev:   [.[] | select(.d >= $ps and .d < $rs)] | length
+    }) |
+    map(. + {delta: (.recent - .prev)}) |
+    sort_by(.delta) | .[0] |
+    if .delta < 0 then "❄️  Falling: \(.cat) (\(.delta))" else "No fallers" end
+  ' "$tracker_file")
+
+  echo "$top_riser"
+  echo "$top_faller"
+}
+
+cmd_health() {
+  echo "=== Meme Health Report ==="
+  echo ""
+
+  local issues=0
+
+  # --- 1. Category audit (inline, not calling cmd_audit to control output) ---
+  local total_cats=0 low_cats=0 total_files=0
+  local min_files=3
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* ]] && continue
+    total_cats=$((total_cats + 1))
+    local count; count=$(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) | wc -l)
+    total_files=$((total_files + count))
+    [[ $count -lt $min_files ]] && low_cats=$((low_cats + 1))
+  done
+  if [[ $low_cats -eq 0 ]]; then
+    echo "📁 Categories: ✅ $total_cats categories, all ≥$min_files files ($total_files total)"
+  else
+    echo "📁 Categories: ⚠️  $low_cats/$total_cats below $min_files files ($total_files total)"
+    issues=$((issues + 1))
+  fi
+
+  # --- 2. Tag coverage ---
+  local tags_file="$MEMES_DIR/tags.json"
+  if [[ -f "$tags_file" ]] && command -v jq &>/dev/null; then
+    local untagged=0
+    for dir in "$MEMES_DIR"/*/; do
+      [[ -d "$dir" ]] || continue
+      local name; name=$(basename "$dir")
+      [[ "$name" == .* ]] && continue
+      while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        local key="$name/$f"
+        local has_tags; has_tags=$(jq -r --arg key "$key" 'if .[$key] then (.[$key] | length) else 0 end' "$tags_file" 2>/dev/null || echo 0)
+        [[ "$has_tags" == "0" || -z "$has_tags" ]] && untagged=$((untagged + 1))
+      done < <(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) -printf '%f\n')
+    done
+    if [[ $untagged -eq 0 ]]; then
+      echo "🏷️  Tags: ✅ all $total_files files tagged"
+    else
+      echo "🏷️  Tags: ⚠️  $untagged files missing tags"
+      issues=$((issues + 1))
+    fi
+  else
+    echo "🏷️  Tags: ⚠️  tags.json not found or jq unavailable"
+    issues=$((issues + 1))
+  fi
+
+  # --- 3. Tracker integrity ---
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if [[ -f "$tracker_file" ]] && command -v jq &>/dev/null; then
+    local history_len; history_len=$(jq '.history | length' "$tracker_file")
+    local total_sent; total_sent=$(jq '.totalSent' "$tracker_file")
+    local tracker_issues=0
+    local tracker_details=""
+
+    # Check totalSent matches history length
+    if [[ "$history_len" != "$total_sent" ]]; then
+      tracker_details+="     totalSent=$total_sent but history has $history_len entries\n"
+      tracker_issues=$((tracker_issues + 1))
+    fi
+
+    # Check for missing required fields (category, time)
+    local missing_cat; missing_cat=$(jq '[.history[] | select(.category == null or .category == "")] | length' "$tracker_file")
+    local missing_time; missing_time=$(jq '[.history[] | select(.time == null or .time == "")] | length' "$tracker_file")
+    [[ "$missing_cat" -gt 0 ]] && { tracker_details+="     $missing_cat entries missing category\n"; tracker_issues=$((tracker_issues + 1)); }
+    [[ "$missing_time" -gt 0 ]] && { tracker_details+="     $missing_time entries missing time\n"; tracker_issues=$((tracker_issues + 1)); }
+
+    # Check for legacy file entries
+    local legacy_files; legacy_files=$(jq '[.history[] | select(.file == "legacy")] | length' "$tracker_file")
+
+    if [[ $tracker_issues -eq 0 ]]; then
+      local info="$history_len entries"
+      [[ "$legacy_files" -gt 0 ]] && info+=", $legacy_files legacy"
+      echo "📊 Tracker: ✅ $info"
+    else
+      echo "📊 Tracker: ⚠️  $tracker_issues issue(s)"
+      echo -e "$tracker_details"
+      issues=$((issues + tracker_issues))
+    fi
+  else
+    echo "📊 Tracker: ⚠️  tracker file not found"
+    issues=$((issues + 1))
+  fi
+
+  # --- 4. Oversized files (>2MB) ---
+  local oversized=0
+  local -a oversized_list=()
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    local size_bytes; size_bytes=$(stat -c%s "$f" 2>/dev/null || echo 0)
+    if [[ $size_bytes -gt 2097152 ]]; then
+      oversized=$((oversized + 1))
+      local size_mb; size_mb=$(awk "BEGIN{printf \"%.1f\", $size_bytes/1048576}")
+      local rel; rel=$(realpath --relative-to="$MEMES_DIR" "$f")
+      oversized_list+=("$rel (${size_mb}MB)")
+    fi
+  done < <(find "$MEMES_DIR" -mindepth 2 -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \))
+  if [[ $oversized -eq 0 ]]; then
+    echo "📏 File sizes: ✅ all under 2MB"
+  else
+    echo "📏 File sizes: ⚠️  $oversized files over 2MB:"
+    for item in "${oversized_list[@]}"; do
+      echo "     → $item"
+    done
+    issues=$((issues + 1))
+  fi
+
+  # --- 5. LFS pointer check ---
+  local lfs_pointers=0
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    local size_bytes; size_bytes=$(stat -c%s "$f" 2>/dev/null || echo 0)
+    if [[ $size_bytes -lt 1024 ]] && grep -q 'oid sha256' "$f" 2>/dev/null; then
+      lfs_pointers=$((lfs_pointers + 1))
+    fi
+  done < <(find "$MEMES_DIR" -mindepth 2 -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \))
+  if [[ $lfs_pointers -gt 0 ]]; then
+    echo "🔗 LFS: ⚠️  $lfs_pointers files are LFS pointers (run: cd $MEMES_DIR && git lfs pull)"
+    issues=$((issues + 1))
+  fi
+
+  # --- Summary ---
+  echo ""
+  if [[ $issues -eq 0 ]]; then
+    echo "✅ All healthy — $total_cats categories, $total_files files"
+  else
+    echo "⚠️  $issues issue(s) found"
+  fi
+  return $([[ $issues -eq 0 ]] && echo 0 || echo 1)
+}
+
 [[ $# -lt 1 ]] && usage
 case "$1" in
+  stats)           cmd_stats ;;
+  search)          shift; cmd_search "$@" ;;
+  backfill-files)  cmd_backfill_files ;;
+  audit)      shift; cmd_audit "$@" ;;
+  health)     cmd_health ;;
+  trending)   shift; cmd_trending "$@" ;;
   pick)       shift; cmd_pick "$@" ;;
   list)       shift; cmd_list "$@" ;;
   random)     cmd_random ;;
   send)       shift; cmd_send "$@" ;;
-  categories) cmd_categories ;;
-  -h|--help)  usage ;;
-  *)          echo "Unknown command: $1" >&2; usage ;;
+  categories)     cmd_categories ;;
+  -h|--help)      usage ;;
+  *)              echo "Unknown command: $1" >&2; usage ;;
 esac

@@ -190,6 +190,113 @@ Open-ended subagents spin. Always set a budget:
    - If meaningful progress: continue from where it left off
    - If no progress: reassess scope, break into smaller pieces
 
+## Spec Pushback Requirement (Phase 0) — Grade-Scaled
+
+Inspired by [[architect-loop]] "Disagreement is mandatory" + [[why-was-fable-banned]] grade-scaling.
+Before implementing, the agent MUST review the spec against actual code and raise concerns—
+**but enforcement depth scales with structural complexity, not blanket-applied.**
+
+### Why
+
+Without this, agents silently implement specs that conflict with the codebase:
+- Spec assumes a function exists → agent creates a duplicate instead of flagging
+- Spec targets the wrong file → agent modifies it anyway, breaking other things
+- Spec is ambiguous → agent picks an interpretation silently, gets bounced in review
+
+Forcing explicit pushback catches spec errors BEFORE implementation, not AFTER a wasted PR cycle.
+
+**But**: applying the full pushback ritual to trivial one-file fixes (typo, comment, rename) wastes tokens for negligible benefit. The [[why-was-fable-banned]] team measured 2-9× overhead for STANDARD+ work, but for LIGHT tasks the fixed gate cost ÷ tiny baseline produces the worst-case ratio. Grade-scaling pays the spec tax only where it earns its keep.
+
+### Grade Classification (Structural, Not Self-Assessed)
+
+| Grade | Triggers | Enforcement |
+|---|---|---|
+| **LIGHT** | Single file AND change type ∈ {typo, comment, rename, format, log-message-tweak} | Skip Phase 0. Require only ONE runnable acceptance check ("after change, running X should output Y"). |
+| **STANDARD** | Default. Functional change OR ≥2 files OR any logic/behavior change | Full Phase 0 prompt (see template below). |
+| **HEAVY** | Touches {auth, payment, migration, schema, secret, security-policy} paths OR ≥5 files OR cross-package refactor | Phase 0 + must_read evidence citations + ≥2 rejected_alternatives + explicit risks list. |
+
+**Auto-escalation rules** (model cannot self-classify down):
+- Touches ≥2 files → STANDARD minimum.
+- Touches auth/migration/schema/secret/security paths → HEAVY minimum.
+- If unsure between two grades → pick the higher one. Failure mode is harmless (over-enforcement on the lead's side), under-enforcement causes recidivist bypass.
+
+### How — Phase 0 Templates by Grade
+
+**LIGHT** (skip Phase 0, embed acceptance only):
+
+```
+After your change, verify by running:
+  <runnable command, e.g. `npm test -- path/to/file` or `grep -n "new text" file.md`>
+Expected: <observable signal, e.g. "3 tests pass" or "line shows new text">
+```
+
+**STANDARD** (full Phase 0):
+
+```
+## Phase 0: Spec Review (BEFORE implementing)
+Read the relevant code first. Then report:
+1. AGREE: aspects of the spec that match the codebase
+2. DISAGREE: conflicts, wrong assumptions, or ambiguities (cite specific files/lines)
+3. SUGGEST: alternative approaches if the spec seems suboptimal
+
+If you find zero disagreements, explicitly state "No spec conflicts found" with evidence
+(which files you checked). Silent compliance — implementing without this review — is a defect.
+Proceed with implementation only after completing this review.
+```
+
+**HEAVY** (Phase 0 + extras):
+
+```
+## Phase 0: Spec Review (BEFORE implementing) — HEAVY GRADE
+Grade is HEAVY because: <reason — path sensitivity / file count / risk surface>.
+
+Read the relevant code first. Then report:
+1. AGREE/DISAGREE/SUGGEST as in STANDARD.
+2. must_read: list specific files+line ranges you read as evidence for your conclusions.
+3. rejected_alternatives: at least 2 viable alternatives you considered and why you rejected each.
+4. risks: at least 1 concrete failure mode if this change goes wrong + how you'd detect it.
+5. forbidden_paths: files you will NOT touch (and why). These are monotonic — once declared, do not edit them.
+
+Proceed with implementation only after the above is complete. Implementation that violates any
+declared forbidden_path or weakens any acceptance check is a defect.
+```
+
+### Rules
+
+1. **Grade is structural, not negotiable.** Classify by file count + path sensitivity before sending the prompt. Don't ask the agent to self-grade.
+2. **Disagreements are welcome.** The agent sees the code; you see the issue. Their pushback is signal, not insubordination.
+3. **Phase 0 output goes in the report** (STANDARD/HEAVY only). The agent's completion report MUST include what they found in Phase 0 (even if "no conflicts").
+4. **If Phase 0 reveals a spec problem** → you (lead) update the spec before the agent proceeds. Don't let them implement a known-bad spec.
+5. **For `claude --print` (non-interactive):** embed the chosen grade's template at the start of the prompt. The output will contain the spec review followed by implementation. Check the review section before accepting the PR.
+6. **HEAVY's forbidden_paths is monotonic.** If a HEAVY task declares forbidden_paths in Phase 0, do not allow the agent (or yourself) to remove items from that list mid-task. Adding is fine; removing is a weakening attack.
+
+## YAGNI Minimalism (Code Generation Constraint)
+
+Inspired by [[ponytail-yagni-skill]] (965★, promptfoo-validated: 80-94% less code, 47-77% less cost).
+
+### How — Add YAGNI ladder to every code task prompt
+
+Every task assignment to a dev agent MUST include:
+
+```
+## YAGNI Ladder (stop at first rung that holds)
+1. Does this need to exist? If not → don't write it
+2. Can stdlib do it? → use stdlib
+3. Native platform feature? → use it
+4. Already-installed dependency does it? → use existing dep
+5. Can it be one line? → write one line
+6. None of the above → write minimum code that works
+
+Mark intentional simplifications with `// ponytail: <upgrade condition>` comments.
+```
+
+### Rules
+
+1. **Stop at the first rung.** Don't skip to implementation when a simpler option exists.
+2. **No new dependencies** unless rungs 1-4 are exhausted.
+3. **ponytail: comments are upgrade paths**, not TODOs. They document "this is deliberately simple because X; upgrade when Y."
+4. **Applies to tests too** — don't create test infrastructure when a simple assert suffices.
+
 ## Definition of Done (Structural Completion Gate)
 
 Inspired by [[smallcode]] v1.1.0 contract system: completion is **structurally gated**, not behavioral.
@@ -257,6 +364,13 @@ Do NOT touch: server code, other components
 Fix: message area needs fixed height + overflow scroll
 Test: `cd web && npm test`
 
+## Phase 0: Spec Review (BEFORE implementing)
+Read `web/src/components/ChatView.tsx` first. Then report:
+1. AGREE: what in the spec matches the current code
+2. DISAGREE: conflicts or wrong assumptions (cite lines)
+3. SUGGEST: better approaches if any
+Silent compliance = defect. Proceed only after this review.
+
 ## Done Contract
 - [ ] Only `web/src/components/ChatView.tsx` modified
 - [ ] `cd web && npm test` exits 0
@@ -278,6 +392,8 @@ Test: `cd web && npm test`
 - ❌ Assuming the dev will figure out context — spell it out
 - ❌ Assigning without a Done Contract — no assertions = no verifiable completion
 - ❌ Accepting "done with caveats" — ❌ assertions mean fix or escalate, not "close enough"
+- ❌ Skipping Phase 0 on STANDARD/HEAVY tasks — agent silently implements bad specs. (LIGHT tasks legitimately skip Phase 0; classify by structure, not vibes.)
+- ❌ Treating agent disagreement as insubordination — they see the code, you see the issue; their pushback is signal
 
 ## Hard Lessons
 

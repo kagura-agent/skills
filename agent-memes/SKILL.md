@@ -105,7 +105,7 @@ bash ~/.openclaw/workspace/skills/agent-memes/scripts/setup.sh
 
 That's it! `setup.sh` handles everything: git lfs, meme library clone, CLI install, permissions.
 
-## Categories (199 memes, 26 categories)
+## Categories (236 memes, 26 categories)
 
 approve · bruh · confused · cute-animals · debug-mood · disappointed · encourage · facepalm · greeting-bye · greeting-hello · greeting-morning · greeting-night · happy · love · nailed-it · panic · popcorn · sad · shrug · smug · thanks · thinking · tired · waiting · working · wow
 

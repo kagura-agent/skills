@@ -67,6 +67,21 @@ Wait for sub-agent to complete. Collect its output.
 
 **`type: 'complete'`** → Workflow finished. Report results.
 
+### 3b. Goal-Drift Check (spawn nodes only)
+
+After a sub-agent returns, verify its output addresses the stated task:
+
+```bash
+bash ~/.openclaw/workspace/tools/goal-drift-check.sh \
+  --task "<node task description>" \
+  --result "<subagent output summary>"
+```
+
+If `⚠️ DRIFT DETECTED`: investigate before advancing — the sub-agent may have wandered.
+Add `--verbose` for detailed token analysis.
+
+Based on eval-view's Jaccard token overlap baseline (deterministic, zero LLM cost).
+
 ### 4. Advance
 
 After getting the result (from sub-agent output or your own work):

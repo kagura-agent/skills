@@ -25,6 +25,8 @@ memes pick happy                               # Just pick, get path (no send)
 memes categories                               # List all categories
 memes stats                                    # Usage frequency per category
 memes search <query>                           # Fuzzy tag search across all memes
+memes wake                                     # Pick from most dormant category (longest since last send)
+memes dormant-blast [n]                        # Send up to N dormant memes (1 per category, stalest first)
 memes audit [min]                              # Health check: file counts + tag coverage
 memes trending [days]                          # Compare recent vs previous period usage
 ```
@@ -105,7 +107,7 @@ bash ~/.openclaw/workspace/skills/agent-memes/scripts/setup.sh
 
 That's it! `setup.sh` handles everything: git lfs, meme library clone, CLI install, permissions.
 
-## Categories (236 memes, 26 categories)
+## Categories (243 memes, 26 categories)
 
 approve · bruh · confused · cute-animals · debug-mood · disappointed · encourage · facepalm · greeting-bye · greeting-hello · greeting-morning · greeting-night · happy · love · nailed-it · panic · popcorn · sad · shrug · smug · thanks · thinking · tired · waiting · working · wow
 
@@ -113,3 +115,23 @@ approve · bruh · confused · cute-animals · debug-mood · disappointed · enc
 
 Drop image files (gif/jpg/png/webp) into `$MEMES_DIR/<category>/`. That's it.
 New categories are created automatically by adding a new folder.
+
+## Wake & Dormant Blast (Dormant Category Rotation)
+
+```bash
+memes wake                                       # Pick a file from the most dormant category
+memes dormant-blast [n]                          # Send up to N dormant memes (default 1)
+memes dormant-blast 3 --to channel:123456        # Blast 3 dormant categories to a target
+memes dormant-blast 5 --channel telegram --caption "☀️ wake up!"  # Platform + custom caption
+```
+
+**`wake`** — Pick from whichever category has gone longest without a send. Use when multiple categories fit the vibe equally and you want to keep the library exercised.
+
+**`dormant-blast [n]`** — Send up to N memes, one per dormant category, ordered by staleness (oldest first). Options:
+- `[n]` — max memes to send (default: 1)
+- `--to <target>` — delivery target (e.g. `channel:123456`)
+- `--channel <platform>` — platform override (discord/telegram/feishu/line)
+- `--caption <text>` — custom caption (default: "💤 dormant blast — waking <category>")
+- 1s delay between sends to avoid rate limiting; skips failed sends and continues
+
+**In chat flow:** When nudge/heartbeat triggers a meme opportunity and you're deciding between 2+ fitting categories, prefer the dormant one. Don't force it — only use wake output if the category genuinely fits the moment.

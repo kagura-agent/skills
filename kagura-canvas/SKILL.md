@@ -21,7 +21,7 @@ sessions_send(
 
 The reply will contain the image path, like:
 ```
-图片路径：/home/kagura/.openclaw/workspace/some-image.png
+图片路径：/home/kagura/.openclaw/workspace/canvas/output/some-image.png
 ```
 
 Parse the path from the reply and use it however you need (embed in story, send to channel, etc).

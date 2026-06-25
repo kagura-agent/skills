@@ -42,6 +42,7 @@ Commands:
   search <query>          Search memes by tags (fuzzy cross-category match)
   backfill-files          Fill missing 'file' field in old tracker entries
   normalize               Fix malformed tracker entries (missing fields, old date format)
+  expire-legacy           Mark unresolvable 'legacy' file entries as permanently expired
   audit [min_files]       Check category health and tag coverage (default min: 3)
   health                  Combined health check: audit + tracker integrity + oversized files
 
@@ -1213,6 +1214,111 @@ cmd_sync() {
   echo "✅ Tracker synced: totalSent=$total, counts_sum=$counts_sum, all derived from history"
 }
 
+cmd_expire_legacy() {
+  # Mark remaining 'legacy' file entries as permanently unresolvable.
+  # These are old entries from before _track_send recorded filenames.
+  # The original RANDOM pick was ephemeral and cannot be reconstructed.
+  # Pass --dry-run to preview without modifying.
+  local dry_run=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run=true; shift ;;
+      *)         shift ;;
+    esac
+  done
+
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for expire-legacy" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  # Count current legacy entries
+  local legacy_count
+  legacy_count=$(jq '[.history[] | select(.file == "legacy")] | length' "$tracker_file")
+  if [[ "$legacy_count" -eq 0 ]]; then
+    echo "✅ No legacy entries to expire"
+    return 0
+  fi
+
+  echo "=== Expire Legacy ==="
+  echo "Found $legacy_count entries with file=\"legacy\""
+  echo ""
+
+  # Attempt to resolve: check if any legacy entry has a caption/note that
+  # matches an actual filename in the category directory (unlikely but thorough)
+  local resolved=0
+  local tmp; tmp=$(mktemp)
+  cp "$tracker_file" "$tmp"
+
+  # Build a lookup of category → filenames
+  local -A cat_files=()
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* ]] && continue
+    local fnames
+    fnames=$(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) -printf '%f\n' 2>/dev/null | tr '\n' '|')
+    cat_files["$name"]="$fnames"
+  done
+
+  # Check each legacy entry for filename hints in note/caption fields
+  local match_jq=''
+  for cat in "${!cat_files[@]}"; do
+    IFS='|' read -ra flist <<< "${cat_files[$cat]}"
+    for fname in "${flist[@]}"; do
+      [[ -z "$fname" ]] && continue
+      local base="${fname%.*}"  # strip extension
+      # Build jq filter to match filename references in note/caption
+      match_jq=$(jq --arg cat "$cat" --arg fname "$fname" --arg base "$base" '
+        .history |= [.[] |
+          if (.file == "legacy" and .category == $cat and
+              ((.note // "" | test($base; "i")) or (.caption // "" | test($base; "i"))))
+          then .file = $fname
+          else . end
+        ]' "$tmp" 2>/dev/null)
+      if [[ -n "$match_jq" ]]; then
+        echo "$match_jq" > "$tmp"
+      fi
+    done
+  done
+
+  # Count how many got resolved by filename matching
+  local remaining_legacy
+  remaining_legacy=$(jq '[.history[] | select(.file == "legacy")] | length' "$tmp")
+  resolved=$((legacy_count - remaining_legacy))
+  if [[ $resolved -gt 0 ]]; then
+    echo "📎 Resolved $resolved entries by filename matching in notes/captions"
+  fi
+
+  # Mark all remaining legacy as "unresolvable"
+  jq '.history |= [.[] | if .file == "legacy" then .file = "unresolvable" else . end]' "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
+
+  echo ""
+  echo "Results:"
+  echo "  Resolved:      $resolved entries (matched filename in note/caption)"
+  echo "  Unresolvable:  $remaining_legacy entries (original pick was ephemeral)"
+  echo "  Total expired: $legacy_count"
+
+  if [[ "$dry_run" == true ]]; then
+    echo ""
+    echo "🔍 Dry run — no changes written"
+    rm -f "$tmp"
+    return 0
+  fi
+
+  # Write back
+  mv "$tmp" "$tracker_file"
+
+  # Re-sync derived fields
+  cmd_sync
+
+  echo ""
+  echo "✅ All legacy entries expired. Tracker synced."
+}
+
 [[ $# -lt 1 ]] && usage
 case "$1" in
   wake)            shift; cmd_wake "$@" ;;
@@ -1222,6 +1328,7 @@ case "$1" in
   stats)           cmd_stats ;;
   search)          shift; cmd_search "$@" ;;
   backfill-files)  cmd_backfill_files ;;
+  expire-legacy)   shift; cmd_expire_legacy "$@" ;;
   audit)      shift; cmd_audit "$@" ;;
   health)     cmd_health ;;
   trending)   shift; cmd_trending "$@" ;;

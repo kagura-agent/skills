@@ -238,6 +238,10 @@ Read the relevant code first. Then report:
 1. AGREE: aspects of the spec that match the codebase
 2. DISAGREE: conflicts, wrong assumptions, or ambiguities (cite specific files/lines)
 3. SUGGEST: alternative approaches if the spec seems suboptimal
+4. CONSTRAINTS: for each constraint you encounter, classify as:
+   - ✅ Fact-inferrable (tech stack, file format, dep version) → resolved from code/config
+   - ❓ User-owned decision (priority, scope, deadline, budget) → unresolved, needs human input
+   Do NOT assume defaults on user-owned decisions. Do NOT ask about fact-inferrable constraints.
 
 If you find zero disagreements, explicitly state "No spec conflicts found" with evidence
 (which files you checked). Silent compliance — implementing without this review — is a defect.
@@ -252,10 +256,16 @@ Grade is HEAVY because: <reason — path sensitivity / file count / risk surface
 
 Read the relevant code first. Then report:
 1. AGREE/DISAGREE/SUGGEST as in STANDARD.
-2. must_read: list specific files+line ranges you read as evidence for your conclusions.
-3. rejected_alternatives: at least 2 viable alternatives you considered and why you rejected each.
-4. risks: at least 1 concrete failure mode if this change goes wrong + how you'd detect it.
-5. forbidden_paths: files you will NOT touch (and why). These are monotonic — once declared, do not edit them.
+2. CONSTRAINTS table: explicit classification of every constraint.
+   | Constraint | Type | Resolution |
+   |---|---|---|
+   | e.g. "TypeScript 5.x" | fact-inferrable | ✅ detected from tsconfig.json |
+   | e.g. "target audience" | user-owned | ❓ needs clarification |
+   Do NOT assume defaults on user-owned decisions. Do NOT ask about fact-inferrable constraints.
+3. must_read: list specific files+line ranges you read as evidence for your conclusions.
+4. rejected_alternatives: at least 2 viable alternatives you considered and why you rejected each.
+5. risks: at least 1 concrete failure mode if this change goes wrong + how you'd detect it.
+6. forbidden_paths: files you will NOT touch (and why). These are monotonic — once declared, do not edit them.
 
 Proceed with implementation only after the above is complete. Implementation that violates any
 declared forbidden_path or weakens any acceptance check is a defect.

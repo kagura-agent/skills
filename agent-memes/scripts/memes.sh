@@ -41,6 +41,7 @@ Commands:
   stats                   Show usage stats from tracker (frequency, last-used)
   search <query>          Search memes by tags (fuzzy cross-category match)
   backfill-files          Fill missing 'file' field in old tracker entries
+  normalize               Fix malformed tracker entries (missing fields, old date format)
   audit [min_files]       Check category health and tag coverage (default min: 3)
   health                  Combined health check: audit + tracker integrity + oversized files
 
@@ -110,6 +111,15 @@ cmd_pick() {
   while IFS= read -r f; do files+=("$f"); done < <(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.jpg' -o -name '*.png' -o -name '*.webp' \) 2>/dev/null)
   [[ ${#files[@]} -eq 0 ]] && { echo "Error: No memes in '$category'" >&2; exit 1; }
 
+  # Exclude specific file (used by auto-retry to avoid picking the same failed file)
+  if [[ -n "${MEMES_EXCLUDE_FILE:-}" ]] && [[ ${#files[@]} -gt 1 ]]; then
+    local excl_filtered=()
+    for f in "${files[@]}"; do
+      [[ "$(basename "$f")" != "$MEMES_EXCLUDE_FILE" ]] && excl_filtered+=("$f")
+    done
+    [[ ${#excl_filtered[@]} -gt 0 ]] && files=("${excl_filtered[@]}")
+  fi
+
   # Per-file recency avoidance: skip files picked recently in this category
   local tracker_file="$MEMES_DIR/meme-tracker.json"
   local file_recency=${MEMES_FILE_RECENCY_WINDOW:-5}
@@ -138,6 +148,26 @@ cmd_pick() {
     echo "Run: cd \"$MEMES_DIR\" && git lfs pull" >&2
     exit 1
   fi
+
+  # Diversity nudge: hint when category is overused in the last 7 days
+  if command -v jq &>/dev/null && [[ -f "$tracker_file" ]]; then
+    local nudge_threshold=${MEMES_NUDGE_THRESHOLD:-4}
+    local cat_7d_count
+    cat_7d_count=$(jq -r --arg cat "$category" --arg since "$(date -d '7 days ago' +%Y-%m-%dT%H:%M 2>/dev/null || date -v-7d +%Y-%m-%dT%H:%M 2>/dev/null)" '
+      [.history[] | select(.category == $cat and .time >= $since)] | length' "$tracker_file" 2>/dev/null || echo 0)
+    if [[ "$cat_7d_count" -ge "$nudge_threshold" ]]; then
+      # Find categories unused in 7d as alternatives
+      local dormant
+      dormant=$(jq -r --arg since "$(date -d '7 days ago' +%Y-%m-%dT%H:%M 2>/dev/null || date -v-7d +%Y-%m-%dT%H:%M 2>/dev/null)" '
+        [.history[] | select(.time >= $since) | .category] | unique as $used |
+        ["approve","bruh","confused","cute-animals","debug-mood","disappointed","encourage","facepalm","greeting-bye","greeting-hello","greeting-morning","greeting-night","happy","love","nailed-it","panic","popcorn","sad","shrug","smug","thanks","thinking","tired","waiting","working","wow"] |
+        [.[] | select(. as $c | $used | index($c) | not)] | .[0:3] | join(", ")' "$tracker_file" 2>/dev/null)
+      if [[ -n "$dormant" ]]; then
+        echo "💡 $category used ${cat_7d_count}x in 7d. Dormant alternatives: $dormant" >&2
+      fi
+    fi
+  fi
+
   echo "$picked"
 }
 
@@ -215,12 +245,13 @@ cmd_stats() {
     echo "Error: No tracker file at $tracker_file" >&2; exit 1
   fi
 
-  local total; total=$(jq '.history | length' "$tracker_file")
+  local total; total=$(jq '[.history[] | select(.result != "failed")] | length' "$tracker_file")
+  local failed; failed=$(jq '[.history[] | select(.result == "failed")] | length' "$tracker_file")
   local first_date; first_date=$(jq -r '.history[0].time // "unknown"' "$tracker_file" | cut -c1-10)
   local last_date; last_date=$(jq -r '.history[-1].time // "unknown"' "$tracker_file" | cut -c1-10)
 
   echo "=== Meme Stats ==="
-  echo "Total sends: $total  |  Period: $first_date → $last_date"
+  echo "Total sends: $total${failed:+ ($failed failed)}  |  Period: $first_date → $last_date"
   echo ""
 
   # Category frequency + last-used
@@ -281,7 +312,7 @@ cmd_stats() {
     local flagged=0
     jq -r '
       ._styles as $s |
-      [$s | to_entries[] | {cat: (.key | split("/")[0]), style: .value}]
+      [$s | to_entries[] | select(.key | contains("/")) | {cat: (.key | split("/")[0]), style: .value}]
       | group_by(.cat)
       | map({
           cat: .[0].cat,
@@ -297,7 +328,7 @@ cmd_stats() {
           pct: (([ .anime, .animal, .cartoon, .live, .meme ] | max) * 100 / .total | floor)
         })
       | sort_by(.cat)
-      | .[] | "\(.cat)\t\(.anime)\t\(.animal)\t\(.cartoon)\t\(.live)\t\(.meme)\t\(.pct | floor)% \(.top_style.s)\(if .pct > 70 then " ⚠️" else "" end)"
+      | .[] | "\(.cat)\t\(.anime)\t\(.animal)\t\(.cartoon)\t\(.live)\t\(.meme)\t\(.pct | floor)% \(.top_style.s)\(if .pct > 70 and (.cat | test("^cute-animals$|^animal") | not) then " ⚠️" else "" end)"
     ' "$tags_file" | while IFS=$'\t' read -r cat anime animal cartoon live meme dominant; do
       printf "%-23s %5s  %6s  %7s  %4s  %5s  %s\n" "$cat" "$anime" "$animal" "$cartoon" "$live" "$meme" "$dominant"
       if [[ "$dominant" == *"⚠️"* ]]; then
@@ -309,13 +340,11 @@ cmd_stats() {
     local flag_count
     flag_count=$(jq '[
       ._styles as $s |
-      [$s | to_entries[] | {cat: (.key | split("/")[0]), style: .value}]
+      [$s | to_entries[] | select(.key | contains("/")) | {cat: (.key | split("/")[0]), style: .value}]
       | group_by(.cat)
-      | .[] | {
-          total: length,
-          max: ([group_by(.style) | .[] | length] | max)
-        }
+      | .[] | {cat: .[0].cat, total: length, max: ([group_by(.style) | .[] | length] | max)}
       | select((.max * 100 / .total) > 70)
+      | select(.cat | test("^cute-animals$|^animal") | not)
     ] | length' "$tags_file")
     if [[ "$flag_count" -gt 0 ]]; then
       echo "⚠️  $flag_count categories have >70% single-style dominance"
@@ -341,7 +370,7 @@ _track_send() {
     '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, method: "memes send"}')
   if [[ -f "$tracker_file" ]]; then
     local tmp; tmp=$(mktemp)
-    jq --argjson e "$entry" --arg ts "$ts" '.history += [$e] | .totalSent = (.history | length) | .lastUpdated = $ts' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
+    jq --argjson e "$entry" --arg ts "$ts" '.history += [$e] | .totalSent = ([.history[] | select(.result == "success" or .result == "sent")] | length) | .totalFailed = ([.history[] | select(.result == "failed")] | length) | .counts = ([.history[] | select(.result == "success" or .result == "sent") | .category] | group_by(.) | map({key: .[0], value: length}) | from_entries) | .lastUpdated = $ts' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
   else
     echo "$entry" | jq '{history: [.], totalSent: 1}' > "$tracker_file"
   fi
@@ -427,19 +456,42 @@ cmd_send() {
       ;;
   esac
 
-  # Track the send in meme-tracker.json (even on send failure, to record the attempt)
-  local result="success"
-  [[ $send_rc -ne 0 ]] && result="failed"
-  _track_send "$category" "$meme_path" "$channel" "$caption" "$result"
+  # Auto-retry with a different file on failure (once)
+  if [[ $send_rc -ne 0 ]]; then
+    _track_send "$category" "$meme_path" "$channel" "$caption" "failed"
+    echo "[memes] send failed for $(basename "$meme_path"), retrying with another file..." >&2
+    local retry_path; retry_path=$(MEMES_EXCLUDE_FILE="$(basename "$meme_path")" cmd_pick "$category" 2>/dev/null || true)
+    if [[ -n "$retry_path" && "$retry_path" != "$meme_path" ]]; then
+      local retry_rc=0
+      case "$channel" in
+        discord)
+          local r_target="${to#channel:}"
+          [[ -z "$r_target" ]] && r_target="${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_CHANNEL:-}}"
+          timeout "$SEND_TIMEOUT" bash "$SCRIPTS_DIR/discord-send-image.sh" "$r_target" "$retry_path" "$caption" || retry_rc=$?
+          ;;
+        *) _send_openclaw "$retry_path" "$caption" "$to" "$channel" "$account" || retry_rc=$? ;;
+      esac
+      local retry_result="success"
+      [[ $retry_rc -ne 0 ]] && retry_result="failed"
+      _track_send "$category" "$retry_path" "$channel" "$caption" "$retry_result"
+      echo "$retry_path"
+      return $retry_rc
+    fi
+    # Retry pick failed (single-file category or same file picked), report original failure
+    echo "$meme_path"
+    return $send_rc
+  fi
 
+  # Track successful send
+  _track_send "$category" "$meme_path" "$channel" "$caption" "success"
   echo "$meme_path"
-  return $send_rc
+  return 0
 }
 
 _send_openclaw() {
   local meme_path="$1" caption="$2" to="$3" channel="$4" account="$5"
   local send_timeout="${MEMES_SEND_TIMEOUT:-30}"
-  local cmd="cd $HOME/repo/openclaw && node scripts/run-node.mjs message send"
+  local cmd="openclaw message send"
   cmd+=" --channel $channel"
   [[ -n "$account" ]] && cmd+=" --account $account"
   [[ -n "$to" ]] && cmd+=" --target \"$to\""
@@ -797,9 +849,28 @@ cmd_health() {
     local tracker_issues=0
     local tracker_details=""
 
-    # Check totalSent matches history length
-    if [[ "$history_len" != "$total_sent" ]]; then
-      tracker_details+="     totalSent=$total_sent but history has $history_len entries\n"
+    # Check totalSent + totalFailed = history length
+    local total_failed; total_failed=$(jq '.totalFailed // 0' "$tracker_file")
+    local failed_in_hist; failed_in_hist=$(jq '[.history[] | select(.result == "failed")] | length' "$tracker_file")
+    local success_in_hist; success_in_hist=$(jq '[.history[] | select(.result == "success" or .result == "sent")] | length' "$tracker_file")
+    if [[ "$total_sent" != "$success_in_hist" ]]; then
+      tracker_details+="     totalSent=$total_sent but $success_in_hist successes in history\n"
+      tracker_issues=$((tracker_issues + 1))
+    fi
+    if [[ "$total_failed" != "$failed_in_hist" ]]; then
+      tracker_details+="     totalFailed=$total_failed but $failed_in_hist failures in history\n"
+      tracker_issues=$((tracker_issues + 1))
+    fi
+
+    # Check counts object matches history category tallies
+    local counts_match; counts_match=$(jq '
+      (.counts // {}) as $counts |
+      ([.history[] | select(.result == "success" or .result == "sent") | .category] | group_by(.) | map({key: .[0], value: length}) | from_entries) as $actual |
+      if ($counts | length) == 0 and ($actual | length) > 0 then "stale"
+      elif $counts == $actual then "ok"
+      else "mismatch" end' "$tracker_file")
+    if [[ "$counts_match" == '"stale"' || "$counts_match" == '"mismatch"' ]]; then
+      tracker_details+="     counts object out of sync with history\n"
       tracker_issues=$((tracker_issues + 1))
     fi
 
@@ -863,6 +934,46 @@ cmd_health() {
     issues=$((issues + 1))
   fi
 
+  # --- 6. Style diversity (>70% single-style per non-exempt category) ---
+  local tags_file="$MEMES_DIR/tags.json"
+  if [[ -f "$tags_file" ]] && command -v jq &>/dev/null && jq -e '._styles' "$tags_file" &>/dev/null; then
+    local style_flagged
+    style_flagged=$(jq '[
+      ._styles as $s |
+      [$s | to_entries[] | select(.key | contains("/")) | {cat: (.key | split("/")[0]), style: .value}]
+      | group_by(.cat)
+      | .[] | {cat: .[0].cat, total: length, max: ([group_by(.style) | .[] | length] | max)}
+      | select((.max * 100 / .total) > 70)
+      | select(.cat | test("^cute-animals$|^animal") | not)
+    ] | length' "$tags_file")
+    if [[ "$style_flagged" -gt 0 ]]; then
+      echo "🎨 Style diversity: ⚠️  $style_flagged categories >70% single-style"
+      issues=$((issues + 1))
+    else
+      echo "🎨 Style diversity: ✅ all categories balanced"
+    fi
+  fi
+
+  # --- 7. Dormant categories (0 sends in last 30 days) ---
+  if [[ -f "$MEMES_DIR/meme-tracker.json" ]] && command -v jq &>/dev/null; then
+    local cutoff; cutoff=$(date -d '30 days ago' --iso-8601=seconds 2>/dev/null || date -v-30d +%Y-%m-%dT%H:%M:%S%z)
+    # Build category list from directories
+    local all_cats_json="[]"
+    all_cats_json=$(for dir in "$MEMES_DIR"/*/; do [[ -d "$dir" ]] && basename "$dir"; done | grep -v '^\.\|^$' | jq -R -s 'split("\n") | map(select(length > 0))')
+    local dormant_cats
+    dormant_cats=$(jq -r --arg cutoff "$cutoff" --argjson all_cats "$all_cats_json" '
+      [.history[] | select(.time >= $cutoff and (.result == "success" or .result == "sent")) | .category] | unique as $used |
+      [$all_cats[] | select(. as $c | $used | index($c) | not)] | sort | join(", ")
+    ' "$MEMES_DIR/meme-tracker.json")
+    if [[ -n "$dormant_cats" && "$dormant_cats" != "" ]]; then
+      local dormant_count; dormant_count=$(echo "$dormant_cats" | tr ',' '\n' | wc -w)
+      echo "💤 Dormant: ⚠️  $dormant_count categories with 0 sends in 30d: $dormant_cats"
+      issues=$((issues + 1))
+    else
+      echo "💤 Dormant: ✅ all categories active in last 30d"
+    fi
+  fi
+
   # --- Summary ---
   echo ""
   if [[ $issues -eq 0 ]]; then
@@ -873,8 +984,236 @@ cmd_health() {
   return $([[ $issues -eq 0 ]] && echo 0 || echo 1)
 }
 
+cmd_wake() {
+  # Pick a random file from the most dormant category (longest since last send)
+  # --send: also send to channel (default: discord #agent-memes)
+  # --to TARGET: override send target
+  # --caption TEXT: override caption
+  local do_send=false send_to="" send_caption="" send_channel=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --send)    do_send=true; shift ;;
+      --to)      send_to="$2"; shift 2 ;;
+      --caption) send_caption="$2"; shift 2 ;;
+      --channel) send_channel="$2"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
+
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for wake" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  # Build list of all categories from directories
+  local -a all_cats=()
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* ]] && continue
+    all_cats+=("$name")
+  done
+
+  # Find the most dormant category: never sent > oldest last send
+  local most_dormant=""
+  local oldest_time="9999-99-99"
+  for cat in "${all_cats[@]}"; do
+    local last_send
+    last_send=$(jq -r --arg cat "$cat" '
+      [.history[] | select(.category == $cat and (.result == "success" or .result == "sent")) | .time]
+      | last // ""' "$tracker_file" 2>/dev/null)
+    if [[ -z "$last_send" || "$last_send" == "null" ]]; then
+      # Never sent — immediately pick this one
+      most_dormant="$cat"
+      oldest_time=""
+      break
+    elif [[ "$last_send" < "$oldest_time" ]]; then
+      oldest_time="$last_send"
+      most_dormant="$cat"
+    fi
+  done
+
+  if [[ -z "$most_dormant" ]]; then
+    echo "Error: No categories found" >&2; exit 1
+  fi
+
+  # Pick a random file from the dormant category (reuse cmd_pick logic)
+  local picked
+  picked=$(cmd_pick "$most_dormant")
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "Error: Failed to pick from '$most_dormant'" >&2; exit 1
+  fi
+
+  echo "💤 Waking dormant category: $most_dormant (last send: ${oldest_time:-never})" >&2
+
+  if [[ "$do_send" == true ]]; then
+    # Auto-send to channel
+    local caption="${send_caption:-💤 meme of the day — waking $most_dormant}"
+    local -a send_args=("$most_dormant" "$caption")
+    [[ -n "$send_to" ]] && send_args+=("--to" "$send_to")
+    [[ -n "$send_channel" ]] && send_args+=("--channel" "$send_channel")
+    cmd_send "${send_args[@]}"
+  else
+    echo "$picked"
+  fi
+}
+
+cmd_dormant_blast() {
+  # Send up to N dormant memes (1 per category, ordered by staleness)
+  # Usage: memes dormant-blast [n] [--to TARGET] [--channel CHANNEL] [--caption TEXT]
+  local max_n=1 send_to="" send_channel="" send_caption=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --to)      send_to="$2"; shift 2 ;;
+      --channel) send_channel="$2"; shift 2 ;;
+      --caption) send_caption="$2"; shift 2 ;;
+      [0-9]*)    max_n="$1"; shift ;;
+      *)         shift ;;
+    esac
+  done
+  [[ "$max_n" -lt 1 ]] && max_n=1
+
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for dormant-blast" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  # Build list of all categories from directories
+  local -a all_cats=()
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* ]] && continue
+    all_cats+=("$name")
+  done
+
+  # Build sorted dormancy list: category|last_send_time
+  local -a dormancy_list=()
+  for cat in "${all_cats[@]}"; do
+    local last_send
+    last_send=$(jq -r --arg cat "$cat" '
+      [.history[] | select(.category == $cat and (.result == "success" or .result == "sent")) | .time]
+      | last // ""' "$tracker_file" 2>/dev/null)
+    if [[ -z "$last_send" || "$last_send" == "null" ]]; then
+      dormancy_list+=("0000-00-00|$cat")
+    else
+      dormancy_list+=("$last_send|$cat")
+    fi
+  done
+
+  # Sort by time ascending (oldest = most dormant first)
+  IFS=$'\n' sorted=($(printf '%s\n' "${dormancy_list[@]}" | sort)); unset IFS
+
+  local sent=0
+  for entry in "${sorted[@]}"; do
+    [[ $sent -ge $max_n ]] && break
+    local cat="${entry#*|}"
+    local last_time="${entry%%|*}"
+
+    echo "💤 [$((sent+1))/$max_n] Waking dormant: $cat (last: ${last_time:-never})" >&2
+
+    # Build send args
+    local caption="${send_caption:-💤 dormant blast — waking $cat}"
+    local -a send_args=("$cat" "$caption")
+    [[ -n "$send_to" ]] && send_args+=("--to" "$send_to")
+    [[ -n "$send_channel" ]] && send_args+=("--channel" "$send_channel")
+
+    if cmd_send "${send_args[@]}"; then
+      sent=$((sent + 1))
+    else
+      echo "⚠️  Failed to send $cat, skipping" >&2
+    fi
+
+    # Small delay between sends to avoid rate limiting
+    [[ $sent -lt $max_n ]] && sleep 1
+  done
+
+  echo "✅ Dormant blast complete: $sent/$max_n categories woken" >&2
+}
+
+cmd_normalize() {
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for normalize" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+
+  # Count issues before fix
+  local before_issues; before_issues=$(jq '[
+    (.history[] | select(.time == null or .time == "")),
+    (.history[] | select(.action == null or .action == "")),
+    (.history[] | select(.result == null or .result == "")),
+    (.history[] | select(.method == null or .method == "")),
+    (.history[] | select(.file == "unknown"))
+  ] | length' "$tracker_file")
+
+  local tmp; tmp=$(mktemp)
+  jq '
+    .history = [.history[] |
+      # Convert old date+time format to ISO time
+      (if (.time | test("^[0-9]{4}-")) then .time
+       elif .date and .time then (.date + "T" + .time + ":00+08:00")
+       else .time // "1970-01-01T00:00:00+00:00"
+       end) as $normalized_time |
+      # Apply normalizations
+      .time = $normalized_time |
+      del(.date) |
+      .action = (.action // "send") |
+      .result = (.result // "success") |
+      .method = (.method // "manual") |
+      (if .file == "unknown" then .file = "legacy" else . end)
+    ]
+  ' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
+
+  # Count issues after fix
+  local after_issues; after_issues=$(jq '[
+    (.history[] | select(.time == null or .time == "")),
+    (.history[] | select(.action == null or .action == "")),
+    (.history[] | select(.result == null or .result == "")),
+    (.history[] | select(.method == null or .method == "")),
+    (.history[] | select(.file == "unknown"))
+  ] | length' "$tracker_file")
+
+  local fixed=$((before_issues - after_issues))
+  if [[ $fixed -gt 0 ]]; then
+    echo "✅ Normalized tracker: fixed $fixed field issues"
+    # Re-sync counts after normalization
+    cmd_sync
+  else
+    echo "✅ Tracker already normalized, no issues found"
+  fi
+}
+
+cmd_sync() {
+  local tracker_file="$MEMES_DIR/meme-tracker.json"
+  if ! command -v jq &>/dev/null; then
+    echo "Error: jq required for sync" >&2; exit 1
+  fi
+  if [[ ! -f "$tracker_file" ]]; then
+    echo "Error: No tracker file at $tracker_file" >&2; exit 1
+  fi
+  local tmp; tmp=$(mktemp)
+  jq '.totalSent = ([.history[] | select(.result == "success" or .result == "sent")] | length) | .totalFailed = ([.history[] | select(.result == "failed")] | length) | .counts = ([.history[] | select(.result == "success" or .result == "sent") | .category] | group_by(.) | map({key: .[0], value: length}) | from_entries) | .consecutiveFailures = ([.history | to_entries | reverse | .[] | select(.value.result == "success" or .value.result == "sent") | .key] | first // -1) as $last_ok | if $last_ok == (.history | length - 1) then 0 else ((.history | length) - 1 - $last_ok) end' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
+  local total; total=$(jq '.totalSent' "$tracker_file")
+  local counts_sum; counts_sum=$(jq '[.counts | to_entries[] | .value] | add' "$tracker_file")
+  echo "✅ Tracker synced: totalSent=$total, counts_sum=$counts_sum, all derived from history"
+}
+
 [[ $# -lt 1 ]] && usage
 case "$1" in
+  wake)            shift; cmd_wake "$@" ;;
+  dormant-blast)   shift; cmd_dormant_blast "$@" ;;
+  sync)            cmd_sync ;;
+  normalize)       cmd_normalize ;;
   stats)           cmd_stats ;;
   search)          shift; cmd_search "$@" ;;
   backfill-files)  cmd_backfill_files ;;

@@ -1150,6 +1150,7 @@ cmd_normalize() {
   # Count issues before fix
   local before_issues; before_issues=$(jq '[
     (.history[] | select(.time == null or .time == "")),
+    (.history[] | select(.category == null or .category == "")),
     (.history[] | select(.action == null or .action == "")),
     (.history[] | select(.result == null or .result == "")),
     (.history[] | select(.method == null or .method == "")),
@@ -1159,14 +1160,17 @@ cmd_normalize() {
   local tmp; tmp=$(mktemp)
   jq '
     .history = [.history[] |
-      # Convert old date+time format to ISO time
-      (if (.time | test("^[0-9]{4}-")) then .time
+      # Convert old date+time format to ISO time (handle null gracefully)
+      (if (.time == null or .time == "") then
+         (if .date then (.date + "T00:00:00+08:00") else "1970-01-01T00:00:00+00:00" end)
+       elif (.time | test("^[0-9]{4}-")) then .time
        elif .date and .time then (.date + "T" + .time + ":00+08:00")
-       else .time // "1970-01-01T00:00:00+00:00"
+       else .time
        end) as $normalized_time |
       # Apply normalizations
       .time = $normalized_time |
       del(.date) |
+      .category = (.category // "unknown") |
       .action = (.action // "send") |
       .result = (.result // "success") |
       .method = (.method // "manual") |
@@ -1177,6 +1181,7 @@ cmd_normalize() {
   # Count issues after fix
   local after_issues; after_issues=$(jq '[
     (.history[] | select(.time == null or .time == "")),
+    (.history[] | select(.category == null or .category == "")),
     (.history[] | select(.action == null or .action == "")),
     (.history[] | select(.result == null or .result == "")),
     (.history[] | select(.method == null or .method == "")),

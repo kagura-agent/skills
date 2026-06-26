@@ -881,12 +881,14 @@ cmd_health() {
     [[ "$missing_cat" -gt 0 ]] && { tracker_details+="     $missing_cat entries missing category\n"; tracker_issues=$((tracker_issues + 1)); }
     [[ "$missing_time" -gt 0 ]] && { tracker_details+="     $missing_time entries missing time\n"; tracker_issues=$((tracker_issues + 1)); }
 
-    # Check for legacy file entries
+    # Check for legacy/unresolvable file entries
     local legacy_files; legacy_files=$(jq '[.history[] | select(.file == "legacy")] | length' "$tracker_file")
+    local unresolvable_files; unresolvable_files=$(jq '[.history[] | select(.file == "unresolvable")] | length' "$tracker_file")
 
     if [[ $tracker_issues -eq 0 ]]; then
       local info="$history_len entries"
       [[ "$legacy_files" -gt 0 ]] && info+=", $legacy_files legacy"
+      [[ "$unresolvable_files" -gt 0 ]] && info+=", $unresolvable_files unresolvable (expired)"
       echo "📊 Tracker: ✅ $info"
     else
       echo "📊 Tracker: ⚠️  $tracker_issues issue(s)"

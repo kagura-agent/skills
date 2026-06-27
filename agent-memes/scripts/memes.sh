@@ -45,6 +45,7 @@ Commands:
   expire-legacy           Mark unresolvable 'legacy' file entries as permanently expired
   audit [min_files]       Check category health and tag coverage (default min: 3)
   health                  Combined health check: audit + tracker integrity + oversized files
+  quality                 Check for duplicate filenames, generic names, near-dupes, missing tags/styles
 
 Platforms with fast send: discord, feishu, telegram
 Other platforms fall back to: openclaw message send
@@ -1321,6 +1322,151 @@ cmd_expire_legacy() {
   echo "✅ All legacy entries expired. Tracker synced."
 }
 
+cmd_quality() {
+  local issues=0
+  local tag_file="$MEMES_DIR/tags.json"
+
+  echo "🔍 Meme Quality Check"
+  echo "===================="
+  echo ""
+
+  # 1. Cross-category duplicate filenames
+  echo "## 1. Cross-category duplicate filenames"
+  local dupes
+  dupes=$(cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) \
+    | sed 's|^\./||' | awk -F/ '{print $NF}' | sort | uniq -d)
+  if [[ -n "$dupes" ]]; then
+    while IFS= read -r fname; do
+      local locations
+      locations=$(cd "$MEMES_DIR" && find . -maxdepth 2 -name "$fname" | sed 's|^\./||' | paste -sd', ')
+      # Check if files are actually identical (same content)
+      local md5s
+      md5s=$(cd "$MEMES_DIR" && find . -maxdepth 2 -name "$fname" -exec md5sum {} \; | awk '{print $1}' | sort -u | wc -l)
+      if [[ "$md5s" -eq 1 ]]; then
+        echo "  ⚠️  $fname (IDENTICAL content) → $locations"
+        echo "     💡 Suggest: rename to <category>-specific name or deduplicate"
+      else
+        echo "  ℹ️  $fname (different content) → $locations"
+        echo "     💡 Suggest: rename to distinguish (e.g. category-$fname)"
+      fi
+      issues=$((issues + 1))
+    done <<< "$dupes"
+  else
+    echo "  ✅ No duplicate filenames across categories"
+  fi
+  echo ""
+
+  # 2. Generic/uninformative filenames
+  echo "## 2. Generic filenames"
+  local generic
+  generic=$(cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) \
+    | sed 's|^\./||' \
+    | grep -iP '(^|/)(giphy|tenor|download|image|unnamed|untitled|IMG_|photo|video|original|source|tmp|temp|test)[^/]*\.' || true)
+  if [[ -n "$generic" ]]; then
+    while IFS= read -r gf; do
+      local base
+      base=$(basename "$gf" | sed 's/\.[^.]*$//')
+      local cat_name
+      cat_name=$(dirname "$gf")
+      echo "  ⚠️  $gf"
+      echo "     💡 Suggest: rename to ${cat_name}-${base// /-}.gif or a descriptive name"
+      issues=$((issues + 1))
+    done <<< "$generic"
+  else
+    echo "  ✅ No generic filenames found"
+  fi
+  echo ""
+
+  # 3. Near-duplicate filenames (same base name ignoring prefix/suffix patterns)
+  echo "## 3. Near-duplicate filenames (similar names)"
+  local near_dupes_found=false
+  # Group by base word (strip common prefixes like anime-, cat-, etc. and suffixes like -2, -v2)
+  local all_files
+  all_files=$(cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) | sed 's|^\./||' | sort)
+  # Find files in SAME category with very similar names
+  local prev_cat="" prev_base="" prev_file=""
+  while IFS= read -r f; do
+    local cat
+    cat=$(dirname "$f")
+    local base
+    base=$(basename "$f" | sed 's/\.[^.]*$//')
+    if [[ "$cat" == "$prev_cat" && -n "$prev_base" ]]; then
+      # Check if one name is a prefix of the other (e.g. wave and wave-2)
+      if [[ "$base" == "$prev_base"* || "$prev_base" == "$base"* ]] && [[ "$base" != "$prev_base" ]]; then
+        echo "  ⚠️  Same category '$cat': $prev_file ↔ $(basename "$f")"
+        echo "     💡 Check if these are redundant or rename for clarity"
+        near_dupes_found=true
+        issues=$((issues + 1))
+      fi
+    fi
+    prev_cat="$cat"
+    prev_base="$base"
+    prev_file=$(basename "$f")
+  done <<< "$all_files"
+  if [[ "$near_dupes_found" == false ]]; then
+    echo "  ✅ No near-duplicate filenames in same category"
+  fi
+  echo ""
+
+  # 4. Missing tags (files without tags.json entries)
+  echo "## 4. Untagged files"
+  local untagged=0
+  if [[ -f "$tag_file" ]]; then
+    while IFS= read -r f; do
+      local tag_key="$f"
+      local has_tag
+      has_tag=$(jq -r --arg k "$tag_key" 'has($k)' "$tag_file" 2>/dev/null || echo "false")
+      if [[ "$has_tag" != "true" ]]; then
+        echo "  ⚠️  $f — not in tags.json"
+        untagged=$((untagged + 1))
+        issues=$((issues + 1))
+      fi
+    done < <(cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) | sed 's|^\./||' | sort)
+    if [[ "$untagged" -eq 0 ]]; then
+      echo "  ✅ All $( cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) | wc -l) files tagged"
+    else
+      echo "  Total untagged: $untagged"
+    fi
+  else
+    echo "  ⚠️  tags.json not found — cannot check"
+    issues=$((issues + 1))
+  fi
+  echo ""
+
+  # 5. Missing styles (files without _styles entries)
+  echo "## 5. Unstyled files"
+  local unstyled=0
+  if [[ -f "$tag_file" ]]; then
+    while IFS= read -r f; do
+      local has_style
+      has_style=$(jq -r --arg k "$f" '._styles | has($k)' "$tag_file" 2>/dev/null || echo "false")
+      if [[ "$has_style" != "true" ]]; then
+        echo "  ⚠️  $f — not in _styles"
+        unstyled=$((unstyled + 1))
+        issues=$((issues + 1))
+      fi
+    done < <(cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) | sed 's|^\./||' | sort)
+    if [[ "$unstyled" -eq 0 ]]; then
+      echo "  ✅ All files have style entries"
+    else
+      echo "  Total unstyled: $unstyled"
+    fi
+  else
+    echo "  ⚠️  tags.json not found — cannot check"
+  fi
+  echo ""
+
+  # Summary
+  echo "==================="
+  if [[ "$issues" -eq 0 ]]; then
+    echo "✅ Quality check passed — no issues found"
+    return 0
+  else
+    echo "⚠️  Found $issues issue(s) to review"
+    return 1
+  fi
+}
+
 [[ $# -lt 1 ]] && usage
 case "$1" in
   wake)            shift; cmd_wake "$@" ;;
@@ -1339,6 +1485,7 @@ case "$1" in
   random)     cmd_random ;;
   send)       shift; cmd_send "$@" ;;
   categories)     cmd_categories ;;
+  quality)   cmd_quality ;;
   -h|--help)      usage ;;
   *)              echo "Unknown command: $1" >&2; usage ;;
 esac

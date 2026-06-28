@@ -29,6 +29,8 @@ memes wake                                     # Pick from most dormant category
 memes dormant-blast [n]                        # Send up to N dormant memes (1 per category, stalest first)
 memes audit [min]                              # Health check: file counts + tag coverage
 memes trending [days]                          # Compare recent vs previous period usage
+memes lint                                     # Check for untagged/unstyled files
+memes lint --fix                               # Auto-tag and auto-style new files
 ```
 
 **One command. Zero friction.** That's the point.

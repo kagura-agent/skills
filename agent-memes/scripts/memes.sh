@@ -46,6 +46,7 @@ Commands:
   audit [min_files]       Check category health and tag coverage (default min: 3)
   health                  Combined health check: audit + tracker integrity + oversized files
   quality                 Check for duplicate filenames, generic names, near-dupes, missing tags/styles
+  lint [--fix]            Check for untagged/unstyled files; --fix auto-adds defaults
 
 Platforms with fast send: discord, feishu, telegram
 Other platforms fall back to: openclaw message send
@@ -1490,6 +1491,161 @@ cmd_quality() {
   fi
 }
 
+# --- lint command: check & auto-fix untagged/unstyled files ---
+# Category name → default base tags mapping
+_category_default_tags() {
+  local cat="$1"
+  case "$cat" in
+    approve)          echo '["approval","well-done","great-job"]' ;;
+    bruh)             echo '["bruh","disbelief","wtf"]' ;;
+    confused)         echo '["confused","huh","bewildered"]' ;;
+    cute-animals)     echo '["cute","animal","adorable"]' ;;
+    debug-mood)       echo '["debug","coding","error"]' ;;
+    disappointed)     echo '["disappointed","disapproval","no"]' ;;
+    encourage)        echo '["encourage","cheer","motivation"]' ;;
+    facepalm)         echo '["facepalm","disapprove","cringe"]' ;;
+    greeting-bye)     echo '["greeting","bye","farewell"]' ;;
+    greeting-hello)   echo '["greeting","hello","hi","wave"]' ;;
+    greeting-morning) echo '["greeting","morning","waking-up"]' ;;
+    greeting-night)   echo '["greeting","night","sleep","cozy"]' ;;
+    happy)            echo '["happy","joy","cheerful"]' ;;
+    love)             echo '["love","heart","affection"]' ;;
+    nailed-it)        echo '["nailed-it","success","victory"]' ;;
+    panic)            echo '["panic","alarm","emergency"]' ;;
+    popcorn)          echo '["popcorn","watching","drama"]' ;;
+    sad)              echo '["sad","crying","upset"]' ;;
+    shrug)            echo '["shrug","helpless","dunno"]' ;;
+    smug)             echo '["smug","smirk","confident"]' ;;
+    thanks)           echo '["thanks","grateful","appreciation"]' ;;
+    thinking)         echo '["thinking","pondering","hmm"]' ;;
+    tired)            echo '["tired","sleepy","exhausted"]' ;;
+    waiting)          echo '["waiting","impatient","bored"]' ;;
+    working)          echo '["working","busy","focused"]' ;;
+    wow)              echo '["wow","surprised","shocked"]' ;;
+    *)                echo "[\"${cat}\"]" ;;
+  esac
+}
+
+# Guess style from filename keywords or extension
+_guess_style() {
+  local fname="$1"
+  local lower
+  lower=$(echo "$fname" | tr '[:upper:]' '[:lower:]')
+  # Keyword-based guessing
+  case "$lower" in
+    *anime*|*manga*|*waifu*|*chibi*|*kawaii*) echo "anime"; return ;;
+    *cat-*|*dog-*|*bunny*|*kitten*|*puppy*|*hamster*|*bird*|*panda*|*duck*|*snoopy*) echo "animal"; return ;;
+    *cartoon*|*simpsons*|*spongebob*|*tom-*|*jerry*|*bugs-bunny*) echo "cartoon"; return ;;
+    *irl-*|*real-*|*photo-*|*live-*) echo "live-action"; return ;;
+  esac
+  # Default
+  echo "meme"
+}
+
+cmd_lint() {
+  local fix=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --fix) fix=true; shift ;;
+      *) echo "Unknown lint option: $1" >&2; return 1 ;;
+    esac
+  done
+
+  local tag_file="$MEMES_DIR/tags.json"
+  if [[ ! -f "$tag_file" ]]; then
+    echo "❌ tags.json not found at $tag_file"
+    return 1
+  fi
+
+  local all_files
+  all_files=$(cd "$MEMES_DIR" && find . -maxdepth 2 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.webp' \) | sed 's|^\./||' | sort)
+
+  # Collect untagged and unstyled files
+  local untagged=() unstyled=()
+  while IFS= read -r f; do
+    local has_tag
+    has_tag=$(jq -r --arg k "$f" 'has($k)' "$tag_file" 2>/dev/null || echo "false")
+    [[ "$has_tag" != "true" ]] && untagged+=("$f")
+
+    local has_style
+    has_style=$(jq -r --arg k "$f" '._styles | has($k)' "$tag_file" 2>/dev/null || echo "false")
+    [[ "$has_style" != "true" ]] && unstyled+=("$f")
+  done <<< "$all_files"
+
+  echo "🔎 Meme Lint"
+  echo "============"
+
+  local total_fixed=0
+
+  # Report & optionally fix untagged
+  if [[ ${#untagged[@]} -gt 0 ]]; then
+    echo ""
+    echo "## Untagged files (${#untagged[@]})"
+    for f in "${untagged[@]}"; do
+      local cat
+      cat=$(dirname "$f")
+      local base
+      base=$(basename "$f" | sed 's/\.[^.]*$//')
+      local default_tags
+      default_tags=$(_category_default_tags "$cat")
+      # Add filename-derived tag if descriptive enough (>2 chars, not generic)
+      local name_tag
+      name_tag=$(echo "$base" | tr '[:upper:]_' '[:lower:]-' | sed 's/[^a-z0-9-]//g')
+      if [[ ${#name_tag} -gt 2 ]] && ! echo "$default_tags" | grep -q "\"$name_tag\""; then
+        default_tags=$(echo "$default_tags" | sed "s/]$/,\"$name_tag\"]/")
+      fi
+      if [[ "$fix" == true ]]; then
+        # Add to tags.json
+        local tmp
+        tmp=$(mktemp)
+        jq --arg k "$f" --argjson v "$default_tags" '. + {($k): $v}' "$tag_file" > "$tmp" && mv "$tmp" "$tag_file"
+        echo "  ✅ $f → tagged: $default_tags"
+        total_fixed=$((total_fixed + 1))
+      else
+        echo "  ⚠️  $f — would add: $default_tags"
+      fi
+    done
+  else
+    echo ""
+    echo "## Untagged files"
+    echo "  ✅ All files tagged"
+  fi
+
+  # Report & optionally fix unstyled (re-check after tag fix since we modify same file)
+  if [[ ${#unstyled[@]} -gt 0 ]]; then
+    echo ""
+    echo "## Unstyled files (${#unstyled[@]})"
+    for f in "${unstyled[@]}"; do
+      local style
+      style=$(_guess_style "$(basename "$f")")
+      if [[ "$fix" == true ]]; then
+        local tmp
+        tmp=$(mktemp)
+        jq --arg k "$f" --arg v "$style" '._styles += {($k): $v}' "$tag_file" > "$tmp" && mv "$tmp" "$tag_file"
+        echo "  ✅ $f → style: $style"
+        total_fixed=$((total_fixed + 1))
+      else
+        echo "  ⚠️  $f — would add style: $style"
+      fi
+    done
+  else
+    echo ""
+    echo "## Unstyled files"
+    echo "  ✅ All files styled"
+  fi
+
+  echo ""
+  echo "============"
+  if [[ "$fix" == true && $total_fixed -gt 0 ]]; then
+    echo "✅ Fixed $total_fixed issue(s)"
+  elif [[ ${#untagged[@]} -eq 0 && ${#unstyled[@]} -eq 0 ]]; then
+    echo "✅ Lint passed — all files tagged and styled"
+  else
+    echo "⚠️  $(( ${#untagged[@]} + ${#unstyled[@]} )) issue(s) found — run 'memes lint --fix' to auto-fix"
+    return 1
+  fi
+}
+
 [[ $# -lt 1 ]] && usage
 case "$1" in
   wake)            shift; cmd_wake "$@" ;;
@@ -1509,6 +1665,7 @@ case "$1" in
   send)       shift; cmd_send "$@" ;;
   categories)     cmd_categories ;;
   quality)   cmd_quality ;;
+  lint)       shift; cmd_lint "$@" ;;
   -h|--help)      usage ;;
   *)              echo "Unknown command: $1" >&2; usage ;;
 esac

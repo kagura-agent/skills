@@ -247,13 +247,16 @@ cmd_stats() {
     echo "Error: No tracker file at $tracker_file" >&2; exit 1
   fi
 
-  local total; total=$(jq '[.history[] | select(.result != "failed")] | length' "$tracker_file")
-  local failed; failed=$(jq '[.history[] | select(.result == "failed")] | length' "$tracker_file")
+  # Use lifetime counters (survive history trimming), fall back to history scan
+  local total; total=$(jq '.totalSent // ([.history[] | select(.result != "failed")] | length)' "$tracker_file")
+  local failed; failed=$(jq '.totalFailed // ([.history[] | select(.result == "failed")] | length)' "$tracker_file")
   local first_date; first_date=$(jq -r '.history[0].time // "unknown"' "$tracker_file" | cut -c1-10)
   local last_date; last_date=$(jq -r '.history[-1].time // "unknown"' "$tracker_file" | cut -c1-10)
+  local trimmed_at; trimmed_at=$(jq -r '.historyTrimmedAt // empty' "$tracker_file" 2>/dev/null)
 
   echo "=== Meme Stats ==="
   echo "Total sends: $total${failed:+ ($failed failed)}  |  Period: $first_date → $last_date"
+  [[ -n "$trimmed_at" ]] && echo "ℹ️  History trimmed (showing last ${MEMES_HISTORY_MAX:-500} entries, lifetime counters preserved)"
   echo ""
 
   # Category frequency + last-used
@@ -370,11 +373,31 @@ _track_send() {
     --arg cap "$caption" \
     --arg res "$result" \
     '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, method: "memes send"}')
+  local max_history="${MEMES_HISTORY_MAX:-500}"
   if [[ -f "$tracker_file" ]]; then
     local tmp; tmp=$(mktemp)
-    jq --argjson e "$entry" --arg ts "$ts" '.history += [$e] | .totalSent = ([.history[] | select(.result == "success" or .result == "sent")] | length) | .totalFailed = ([.history[] | select(.result == "failed")] | length) | .counts = ([.history[] | select(.result == "success" or .result == "sent") | .category] | group_by(.) | map({key: .[0], value: length}) | from_entries) | .lastUpdated = $ts' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
+    # O(1) incremental update: append entry, bump counters, trim if needed
+    jq --argjson e "$entry" --arg ts "$ts" --arg res "$result" --arg cat "$category" --argjson max "$max_history" '
+      .history += [$e] |
+      (if ($res == "success" or $res == "sent") then
+        .totalSent = ((.totalSent // 0) + 1) |
+        .counts[$cat] = ((.counts[$cat] // 0) + 1)
+      else
+        .totalFailed = ((.totalFailed // 0) + 1)
+      end) |
+      .lastUpdated = $ts |
+      .consecutiveFailures = (if ($res == "success" or $res == "sent") then 0 else ((.consecutiveFailures // 0) + 1) end) |
+      (if (.history | length) > $max then
+        .historyTrimmedAt = $ts |
+        .history = .history[-$max:]
+      else . end)
+    ' "$tracker_file" > "$tmp" && mv "$tmp" "$tracker_file"
   else
-    echo "$entry" | jq '{history: [.], totalSent: 1}' > "$tracker_file"
+    local init_sent=0 init_failed=0
+    if [[ "$result" == "success" || "$result" == "sent" ]]; then init_sent=1; else init_failed=1; fi
+    jq -nc --argjson e "$entry" --arg ts "$ts" --arg cat "$category" --argjson sent "$init_sent" --argjson failed "$init_failed" '
+      {history: [$e], totalSent: $sent, totalFailed: $failed, counts: {($cat): $sent}, consecutiveFailures: $failed, lastUpdated: $ts}
+    ' > "$tracker_file"
   fi
 }
 

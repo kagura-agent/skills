@@ -47,6 +47,7 @@ Commands:
   health                  Combined health check: audit + tracker integrity + oversized files
   quality                 Check for duplicate filenames, generic names, near-dupes, missing tags/styles
   lint [--fix]            Check for untagged/unstyled files; --fix auto-adds defaults
+  coverage [--json] [--weak]  Tag/style coverage % per category; --weak filters to issues only
 
 Platforms with fast send: discord, feishu, telegram
 Other platforms fall back to: openclaw message send
@@ -1646,6 +1647,183 @@ cmd_lint() {
   fi
 }
 
+cmd_coverage() {
+  # Show tag/style coverage %, avg tag depth, and style diversity per category
+  # Identifies weakest categories needing attention
+  # --json: output machine-readable JSON instead of table
+  # --json --weak: JSON filtered to only categories with issues (for CI/alerting)
+  local json_mode=false
+  local weak_only=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_mode=true ;;
+      --weak) weak_only=true ;;
+    esac
+    shift
+  done
+
+  local tag_file="$MEMES_DIR/tags.json"
+  if [[ ! -f "$tag_file" ]] || ! command -v jq &>/dev/null; then
+    if $json_mode; then
+      echo '{"error":"Requires tags.json and jq"}'
+    else
+      echo "❌ Requires tags.json and jq" >&2
+    fi
+    return 1
+  fi
+
+  local total_files=0 total_tagged=0 total_styled=0
+  local -a weak_cats=()
+  local json_cats=""
+
+  $json_mode || {
+    echo "📊 Meme Coverage Report"
+    echo "======================="
+    echo ""
+    printf "%-20s %5s %6s %5s %6s %5s %7s %8s\n" "Category" "Files" "Tagged" "Tag%" "Styled" "Sty%" "AvgTags" "Styles"
+    printf '%0.s─' {1..80}; echo ""
+  }
+
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* || "$name" == hooks ]] && continue
+
+    local files; files=$(find "$dir" -maxdepth 1 -type f \( -name '*.gif' -o -name '*.png' -o -name '*.jpg' -o -name '*.jpeg' -o -name '*.webp' \) -printf '%f\n')
+    local count=0 tagged=0 styled=0 tag_sum=0
+    local -A style_set=()
+    local -a style_names=()
+
+    while IFS= read -r f; do
+      [[ -z "$f" ]] && continue
+      count=$((count + 1))
+      local key="$name/$f"
+
+      # Check tags
+      local ntags; ntags=$(jq -r --arg k "$key" 'if .[$k] then (.[$k] | length) else 0 end' "$tag_file" 2>/dev/null)
+      if [[ "$ntags" -gt 0 ]]; then
+        tagged=$((tagged + 1))
+        tag_sum=$((tag_sum + ntags))
+      fi
+
+      # Check style
+      local style; style=$(jq -r --arg k "$key" '._styles[$k] // empty' "$tag_file" 2>/dev/null)
+      if [[ -n "$style" ]]; then
+        styled=$((styled + 1))
+        if [[ -z "${style_set[$style]+_}" ]]; then
+          style_set["$style"]=1
+          style_names+=("$style")
+        fi
+      fi
+    done <<< "$files"
+
+    [[ $count -eq 0 ]] && continue
+
+    local tag_pct=$((tagged * 100 / count))
+    local sty_pct=$((styled * 100 / count))
+    local avg_tags="0.0"
+    if [[ $tagged -gt 0 ]]; then
+      avg_tags=$(awk "BEGIN {printf \"%.1f\", $tag_sum / $tagged}")
+    fi
+    local style_div=${#style_set[@]}
+
+    $json_mode || printf "%-20s %5d %6d %4d%% %6d %4d%% %7s %8d\n" \
+      "$name" "$count" "$tagged" "$tag_pct" "$styled" "$sty_pct" "$avg_tags" "$style_div"
+
+    total_files=$((total_files + count))
+    total_tagged=$((total_tagged + tagged))
+    total_styled=$((total_styled + styled))
+
+    # Flag weakness
+    local -a issue_list=()
+    if [[ $tag_pct -lt 100 ]]; then issue_list+=("tags_${tag_pct}pct"); fi
+    if [[ $sty_pct -lt 100 ]]; then issue_list+=("styles_${sty_pct}pct"); fi
+    if [[ $(awk "BEGIN {print ($tag_sum / ($tagged > 0 ? $tagged : 1) < 4) ? 1 : 0}") -eq 1 && $tagged -gt 0 ]]; then
+      issue_list+=("shallow_tags")
+    fi
+    if [[ $style_div -lt 2 ]]; then
+      issue_list+=("low_style_diversity")
+    fi
+
+    # Human-readable weakness
+    local issues=""
+    if [[ $tag_pct -lt 100 ]]; then issues+="tags ${tag_pct}%"; fi
+    if [[ $sty_pct -lt 100 ]]; then [[ -n "$issues" ]] && issues+=" | "; issues+="styles ${sty_pct}%"; fi
+    if [[ $(awk "BEGIN {print ($tag_sum / ($tagged > 0 ? $tagged : 1) < 4) ? 1 : 0}") -eq 1 && $tagged -gt 0 ]]; then
+      [[ -n "$issues" ]] && issues+=" | "; issues+="shallow tags ($avg_tags avg)"
+    fi
+    if [[ $style_div -lt 2 ]]; then
+      [[ -n "$issues" ]] && issues+=" | "; issues+="low style diversity ($style_div)"
+    fi
+    [[ -n "$issues" ]] && weak_cats+=("$name: $issues")
+
+    # Build JSON category entry
+    if $json_mode; then
+      local styles_json="[]"
+      if [[ ${#style_names[@]} -gt 0 ]]; then
+        styles_json=$(printf '%s\n' "${style_names[@]}" | jq -R . | jq -s .)
+      fi
+      local issues_json="[]"
+      if [[ ${#issue_list[@]} -gt 0 ]]; then
+        issues_json=$(printf '%s\n' "${issue_list[@]}" | jq -R . | jq -s .)
+      fi
+      local cat_json; cat_json=$(jq -n \
+        --arg name "$name" \
+        --argjson files "$count" \
+        --argjson tagged "$tagged" \
+        --argjson tagPct "$tag_pct" \
+        --argjson styled "$styled" \
+        --argjson styPct "$sty_pct" \
+        --arg avgTags "$avg_tags" \
+        --argjson styleDiversity "$style_div" \
+        --argjson styles "$styles_json" \
+        --argjson issues "$issues_json" \
+        '{name:$name, files:$files, tagged:$tagged, tagPct:$tagPct, styled:$styled, styPct:$styPct, avgTags:($avgTags|tonumber), styleDiversity:$styleDiversity, styles:$styles, issues:$issues}')
+      [[ -n "$json_cats" ]] && json_cats+=","
+      json_cats+="$cat_json"
+    fi
+  done
+
+  if $json_mode; then
+    local total_tag_pct=0 total_sty_pct=0
+    [[ $total_files -gt 0 ]] && total_tag_pct=$((total_tagged * 100 / total_files))
+    [[ $total_files -gt 0 ]] && total_sty_pct=$((total_styled * 100 / total_files))
+    local full_json; full_json=$(jq -n \
+      --argjson categories "[$json_cats]" \
+      --argjson totalFiles "$total_files" \
+      --argjson totalTagged "$total_tagged" \
+      --argjson totalTagPct "$total_tag_pct" \
+      --argjson totalStyled "$total_styled" \
+      --argjson totalStyPct "$total_sty_pct" \
+      '{categories:$categories, totals:{files:$totalFiles, tagged:$totalTagged, tagPct:$totalTagPct, styled:$totalStyled, styPct:$totalStyPct}}')
+
+    if $weak_only; then
+      echo "$full_json" | jq '{categories: [.categories[] | select(.issues | length > 0)], totals: .totals}'
+    else
+      echo "$full_json"
+    fi
+    return 0
+  fi
+
+  printf '%0.s─' {1..80}; echo ""
+  # Totals
+  local total_tag_pct=0 total_sty_pct=0
+  [[ $total_files -gt 0 ]] && total_tag_pct=$((total_tagged * 100 / total_files))
+  [[ $total_files -gt 0 ]] && total_sty_pct=$((total_styled * 100 / total_files))
+  printf "%-20s %5d %6d %4d%% %6d %4d%%\n" "TOTAL" "$total_files" "$total_tagged" "$total_tag_pct" "$total_styled" "$total_sty_pct"
+  echo ""
+
+  # Weakest categories
+  if [[ ${#weak_cats[@]} -gt 0 ]]; then
+    echo "⚠️  Weakest categories:"
+    for entry in "${weak_cats[@]}"; do
+      echo "  → $entry"
+    done
+  else
+    echo "✅ All categories have excellent coverage!"
+  fi
+}
+
 [[ $# -lt 1 ]] && usage
 case "$1" in
   wake)            shift; cmd_wake "$@" ;;
@@ -1666,6 +1844,7 @@ case "$1" in
   categories)     cmd_categories ;;
   quality)   cmd_quality ;;
   lint)       shift; cmd_lint "$@" ;;
+  coverage)  shift; cmd_coverage "$@" ;;
   -h|--help)      usage ;;
   *)              echo "Unknown command: $1" >&2; usage ;;
 esac

@@ -31,6 +31,8 @@ memes audit [min]                              # Health check: file counts + tag
 memes trending [days]                          # Compare recent vs previous period usage
 memes lint                                     # Check for untagged/unstyled files
 memes lint --fix                               # Auto-tag and auto-style new files
+memes coverage                                 # Tag/style coverage % per category + weakest areas
+memes coverage --json                          # JSON output for programmatic consumption
 ```
 
 **One command. Zero friction.** That's the point.

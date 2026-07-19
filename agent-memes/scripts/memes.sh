@@ -1606,9 +1606,8 @@ cmd_wake() {
     echo "Error: Failed to pick from '$most_dormant'" >&2; exit 1
   fi
 
-  echo "💤 Waking dormant category: $most_dormant (last send: ${oldest_time:-never})" >&2
-
   if [[ "$do_send" == true ]]; then
+    echo "💤 Waking dormant category: $most_dormant (last send: ${oldest_time:-never})" >&2
     # Auto-send to channel
     local caption="${send_caption:-💤 meme of the day — waking $most_dormant}"
     local -a send_args=("$most_dormant" "$caption")
@@ -1616,6 +1615,7 @@ cmd_wake() {
     [[ -n "$send_channel" ]] && send_args+=("--channel" "$send_channel")
     cmd_send "${send_args[@]}"
   else
+    echo "🎲 Picked from $most_dormant (last send: ${oldest_time:-never}) — use --send to deliver" >&2
     echo "$picked"
   fi
 }

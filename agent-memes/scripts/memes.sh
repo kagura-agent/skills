@@ -2911,10 +2911,11 @@ _dedup_phash() {
 
   cd "$MEMES_DIR"
 
-  # Compute pHash for all images via Python
+  # Compute pHash for all images via Python (multi-frame for GIFs)
   local phash_json
   phash_json=$(python3 -c "
 import imagehash, json, os, sys
+import numpy as np
 from PIL import Image
 
 memes_dir = sys.argv[1]
@@ -2931,18 +2932,44 @@ for entry in sorted(os.listdir(memes_dir)):
         if ext in ('.gif', '.png', '.jpg', '.jpeg', '.webp'):
             files.append(os.path.join(entry, fname))
 
+def multi_frame_phash(img_path):
+    \"\"\"Compute perceptual hash using multiple frames for GIFs.
+    Samples up to 4 frames (first, 25%, 50%, 75%) and averages their
+    hash arrays to produce a composite hash that represents the whole
+    animation, not just the first frame. Static images use single-frame.\"\"\"
+    img = Image.open(img_path)
+    n_frames = getattr(img, 'n_frames', 1)
+    if n_frames <= 1:
+        return imagehash.phash(img.convert('RGB'))
+    # Sample up to 4 evenly-spaced frames
+    sample_indices = [0]
+    if n_frames >= 4:
+        sample_indices = [0, n_frames // 4, n_frames // 2, 3 * n_frames // 4]
+    elif n_frames >= 2:
+        sample_indices = list(range(min(n_frames, 4)))
+    hash_arrays = []
+    for idx in sample_indices:
+        try:
+            img.seek(idx)
+            h = imagehash.phash(img.convert('RGB'))
+            hash_arrays.append(h.hash.flatten().astype(np.float64))
+        except (EOFError, OSError):
+            break
+    if not hash_arrays:
+        img.seek(0)
+        return imagehash.phash(img.convert('RGB'))
+    # Average the boolean hash arrays and threshold at 0.5
+    avg = np.mean(hash_arrays, axis=0)
+    combined = avg >= 0.5
+    size = int(np.sqrt(len(combined)))
+    return imagehash.ImageHash(combined.reshape(size, size))
+
 # Compute pHash for each file
 hashes = {}
 errors = []
 for fpath in files:
     try:
-        img = Image.open(os.path.join(memes_dir, fpath))
-        try:
-            if hasattr(img, 'n_frames') and img.n_frames > 1:
-                img.seek(0)
-        except Exception:
-            img.seek(0)  # n_frames failed (e.g. corrupt GIF frame), reset to frame 0
-        h = imagehash.phash(img.convert('RGB'))
+        h = multi_frame_phash(os.path.join(memes_dir, fpath))
         hashes[fpath] = str(h)
     except Exception as e:
         errors.append({'file': fpath, 'error': str(e)})
@@ -3202,7 +3229,7 @@ cmd_dedup() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --fix) fix=true ;;
-      --phash) phash=true ;;
+      --phash|--visual) phash=true ;;
       --threshold)
         shift
         if [[ -z "${1:-}" ]] || ! [[ "$1" =~ ^[0-9]+$ ]] || [[ "$1" -eq 0 ]]; then
@@ -3211,13 +3238,13 @@ cmd_dedup() {
         phash_threshold="$1"
         ;;
       -h|--help)
-        echo "Usage: memes dedup [--fix] [--phash [--threshold N]]" >&2
+        echo "Usage: memes dedup [--fix] [--visual|--phash [--threshold N]]" >&2
         echo "  Find duplicate files across/within categories." >&2
-        echo "  Default: exact md5 match. --phash uses perceptual hash (near-duplicates)." >&2
+        echo "  Default: exact md5 match. --visual uses perceptual hash (near-duplicates)." >&2
         echo "  --threshold N: hamming distance for pHash (default 10, lower=stricter)." >&2
         echo "  Default: dry-run. --fix removes duplicates, merges tags, updates tracker." >&2
         return 0 ;;
-      *) echo "Usage: memes dedup [--fix] [--phash [--threshold N]]" >&2; return 1 ;;
+      *) echo "Usage: memes dedup [--fix] [--visual|--phash [--threshold N]]" >&2; return 1 ;;
     esac
     shift
   done

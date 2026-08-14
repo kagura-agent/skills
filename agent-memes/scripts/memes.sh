@@ -38,11 +38,11 @@ Commands:
   pick <category>         Randomly pick a meme, print its path
   list <category>         List all memes in a category
   random                  Pick from any category at random
-  send <category> [caption] [--to target] [--channel platform] [--account name] [--file path]
+  send <category> [caption] [--to target] [--channel platform] [--account name] [--file path] [--source name]
   categories              List all categories with counts
-  cron-check [--threshold N] [--dry-run]  Autonomous cron: review --full + auto-wake stalest (default 14d)
+  cron-check [--threshold N] [--dry-run]  Autonomous cron: delegates to review --full --auto-wake (up to 3, default 8d)
   stats                   Show usage stats from tracker (frequency, last-used)
-  failures [n] [--json]   Show last N failures with error messages (default 10)
+  failures [n] [--json] [--since DAYS]  Show failures; --since filters to last N days
   search <query>          Search memes by tags (fuzzy cross-category match)
   freshness [--json]      Per-category staleness; >7d general, >14d contextual (greeting-*)
   backfill-files          Fill missing 'file' field in old tracker entries
@@ -53,9 +53,11 @@ Commands:
   quality                 Check for duplicate filenames, generic names, near-dupes, missing tags/styles
   lint [--fix]            Check for untagged/unstyled files; --fix auto-adds defaults
   coverage [--json] [--weak]  Tag/style coverage % per category; --weak filters to issues only
-  review                  Cron-friendly review: coverage check + tracker log + remediation hints
+  review [--auto-wake] [--wake-threshold N]  Cron-friendly review + optional batch auto-wake (up to 3, default 8d)
   dedup [--fix]            Find exact-duplicate files (md5); --fix removes dupes and merges tags
   retire <src> <tgt> [--dry-run]  Merge src category into tgt (move files, update tags/tracker)
+  wake [CATEGORY] [--send] [--to T] [--caption TEXT]  Wake stalest (or specific) category
+  dormant-blast [n] [--to T]  Wake n stalest categories at once (default: all stale)
   suggest <text>          Suggest top-3 memes by mood/text (--send to auto-send top pick)
   gallery [--output FILE]  Generate HTML gallery page for visual meme browsing
 
@@ -138,6 +140,11 @@ cmd_pick() {
   # Per-file recency avoidance: skip files picked recently in this category
   local tracker_file="$MEMES_DIR/meme-tracker.json"
   local file_recency=${MEMES_FILE_RECENCY_WINDOW:-5}
+  # Adaptive recency: for small pools (≤12 files), widen window to maximize rotation
+  # This addresses high-repetition categories (e.g. nailed-it: 8 files, 56 sends)
+  if [[ ${#files[@]} -le 12 ]] && [[ $((${#files[@]} - 2)) -gt $file_recency ]]; then
+    file_recency=$((${#files[@]} - 2))
+  fi
   if command -v jq &>/dev/null && [[ -f "$tracker_file" ]] && [[ ${#files[@]} -gt 1 ]]; then
     local -A recent_files=()
     while read -r fname; do
@@ -255,43 +262,68 @@ cmd_failures() {
   local tracker_file="$MEMES_DIR/meme-tracker.json"
   command -v jq &>/dev/null || { echo "Error: jq required" >&2; exit 1; }
   [[ -f "$tracker_file" ]] || { echo "No tracker file" >&2; exit 1; }
-  local count="${1:-10}"
+  local count=10
   local json_mode=false
-  [[ "$count" == "--json" ]] && { json_mode=true; count="${2:-10}"; }
-  [[ "${2:-}" == "--json" ]] && json_mode=true
+  local since_days=0  # 0 = no filter (all time)
+  # Parse args: [N] [--json] [--since DAYS]
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_mode=true; shift ;;
+      --since) since_days="${2:-30}"; shift 2 ;;
+      [0-9]*) count="$1"; shift ;;
+      *) shift ;;
+    esac
+  done
 
-  local failures; failures=$(jq --argjson n "$count" '[
-    .history[] | select(.result == "failed")
-  ] | .[-$n:]' "$tracker_file")
+  # Build date filter
+  local date_filter="true"
+  local since_label="all time"
+  if [[ "$since_days" -gt 0 ]]; then
+    local cutoff_iso; cutoff_iso=$(date -d "$since_days days ago" --iso-8601=seconds 2>/dev/null)
+    date_filter="(.time >= \"$cutoff_iso\")"
+    since_label="last ${since_days}d"
+  fi
 
-  local total; total=$(jq '[.history[] | select(.result == "failed")] | length' "$tracker_file")
+  local failures; failures=$(jq --argjson n "$count" "[
+    .history[] | select(.result == \"failed\" and $date_filter)
+  ] | .[-\$n:]" "$tracker_file")
+
+  local total; total=$(jq "[.history[] | select(.result == \"failed\" and $date_filter)] | length" "$tracker_file")
 
   if $json_mode; then
     echo "$failures"
     return
   fi
 
-  echo "❌ Recent Failures (last $count of $total total)"
+  local header="❌ Failures (last $count of $total"
+  [[ "$since_days" -gt 0 ]] && header+=", since ${since_days}d ago"
+  header+=")"
+  echo "$header"
   echo "═══════════════════════════════════════════════════"
   echo
 
   local count_actual; count_actual=$(echo "$failures" | jq 'length')
   if [[ "$count_actual" -eq 0 ]]; then
-    echo "No failures recorded! 🎉"
+    echo "No failures recorded${since_days:+ in the last ${since_days}d}! 🎉"
     return
   fi
 
-  echo "$failures" | jq -r '.[] | "\(.time[:19])  \(.category)/\(.file // "?")  [\(.channel // "?")]  \(.error // "(no error captured)")"'
+  echo "$failures" | jq -r '.[] | "\(.time[:19])  \(.category)/\(.file // "?")  [\(.channel // "?")\(if .target then " → " + .target else "" end)]  \(.error // "(no error captured)")"'
   echo
 
-  # Top failing categories
-  echo "📊 Failure hotspots:"
-  jq -r '[.history[] | select(.result == "failed") | .category] | group_by(.) | map({cat: .[0], n: length}) | sort_by(-.n) | .[:5][] | "   \(.cat): \(.n) failures"' "$tracker_file"
+  # Top failing categories (within date filter)
+  echo "📊 Failure hotspots ($since_label):"
+  jq -r "[.history[] | select(.result == \"failed\" and $date_filter) | .category] | group_by(.) | map({cat: .[0], n: length}) | sort_by(-.n) | .[:5][] | \"   \(.cat): \(.n) failures\"" "$tracker_file"
 
-  # Error pattern summary (if errors are captured)
-  local with_errors; with_errors=$(jq '[.history[] | select(.result == "failed" and .error != null and .error != "")] | length' "$tracker_file")
+  # Error capture rate (within date filter)
+  local with_errors; with_errors=$(jq "[.history[] | select(.result == \"failed\" and $date_filter and .error != null and .error != \"\")] | length" "$tracker_file")
   echo
-  echo "📝 Error capture: $with_errors/$total failures have error messages"
+  if [[ "$total" -gt 0 ]]; then
+    local pct=$((with_errors * 100 / total))
+    echo "📝 Error capture ($since_label): $with_errors/$total failures have error messages ($pct%)"
+  else
+    echo "📝 No failures in period"
+  fi
 }
 
 cmd_stats() {
@@ -424,7 +456,7 @@ _is_contextual_cat() {
 }
 
 _track_send() {
-  local category="$1" file="$2" channel="$3" caption="$4" result="${5:-success}" error_msg="${6:-}"
+  local category="$1" file="$2" channel="$3" caption="$4" result="${5:-success}" error_msg="${6:-}" target="${7:-}" source="${8:-}"
   local tracker_file="$MEMES_DIR/meme-tracker.json"
   command -v jq &>/dev/null || return 0
   local ts; ts=$(date -Iseconds)
@@ -441,7 +473,9 @@ _track_send() {
       --arg cap "$caption" \
       --arg res "$result" \
       --arg err "$error_msg" \
-      '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, error: $err, method: "memes send"}')
+      --arg tgt "$target" \
+      --arg src "$source" \
+      '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, error: $err, method: "memes send"} | if $tgt != "" then .target = $tgt else . end | if $src != "" then .source = $src else . end')
   else
     entry=$(jq -nc \
       --arg ts "$ts" \
@@ -450,7 +484,9 @@ _track_send() {
       --arg ch "$channel" \
       --arg cap "$caption" \
       --arg res "$result" \
-      '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, method: "memes send"}')
+      --arg tgt "$target" \
+      --arg src "$source" \
+      '{time: $ts, action: "send", category: $cat, file: $file, channel: $ch, caption: $cap, result: $res, method: "memes send"} | if $tgt != "" then .target = $tgt else . end | if $src != "" then .source = $src else . end')
   fi
   local max_history="${MEMES_HISTORY_MAX:-500}"
   if [[ -f "$tracker_file" ]]; then
@@ -481,7 +517,7 @@ _track_send() {
 }
 
 cmd_send() {
-  local category="" caption="" to="" channel="${OPENCLAW_CHANNEL:-discord}" account="" file_override=""
+  local category="" caption="" to="" channel="${OPENCLAW_CHANNEL:-discord}" account="" file_override="" source=""
   # Detect platform as first arg (overrides env default)
   [[ "${1:-}" =~ ^(discord|feishu|telegram|whatsapp|slack|line|qq|wechat)$ ]] && { channel="$1"; shift; }
   while [[ $# -gt 0 ]]; do
@@ -492,6 +528,7 @@ cmd_send() {
       --channel)      channel="$2"; shift 2 ;;
       --account|-a)   account="$2"; shift 2 ;;
       --file|-f)      file_override="$2"; shift 2 ;;
+      --source)       source="$2"; shift 2 ;;
       *)              if [[ -z "$category" ]]; then category="$1"; else caption="${caption:+$caption }$1"; fi; shift ;;
     esac
   done
@@ -513,7 +550,10 @@ cmd_send() {
 
   # Capture stderr for error diagnostics on failure
   local _send_err_file; _send_err_file=$(mktemp)
-  trap 'rm -f "$_send_err_file"' RETURN 2>/dev/null || true
+  trap 'rm -f "${_send_err_file:-}"' RETURN 2>/dev/null || true
+
+  # Resolved target for tracker diagnostics
+  local _resolved_target=""
 
   # Try platform-specific fast script first, fall back to openclaw CLI
   local send_rc=0
@@ -525,6 +565,7 @@ cmd_send() {
         target="${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_CHANNEL:-}}"
         [[ -z "$target" ]] && { echo "Error: --to <channel_id> required (or set MEMES_DEFAULT_CHANNEL)" >&2; exit 1; }
       fi
+      _resolved_target="$target"
       if [[ -x "$script" ]]; then
         timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
       else
@@ -535,6 +576,7 @@ cmd_send() {
       local script="$SCRIPTS_DIR/feishu-send-image.mjs"
       local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_FEISHU:-}}}"
       [[ -z "$target" ]] && { echo "Error: --to <target> required (or set MEMES_DEFAULT_FEISHU)" >&2; exit 1; }
+      _resolved_target="$target"
       if [[ -f "$script" ]]; then
         timeout "$SEND_TIMEOUT" node "$script" "$target" "$meme_path" ${caption:+"$caption"} 2>>"$_send_err_file" || send_rc=$?
       else
@@ -545,6 +587,7 @@ cmd_send() {
       local script="$SCRIPTS_DIR/line-send-image.sh"
       local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_LINE:-}}}"
       [[ -z "$target" ]] && { echo "Error: --to <user_or_group_id> required (or set MEMES_DEFAULT_LINE)" >&2; exit 1; }
+      _resolved_target="$target"
       if [[ -x "$script" ]]; then
         timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
       else
@@ -555,6 +598,7 @@ cmd_send() {
       local script="$SCRIPTS_DIR/telegram-send-image.sh"
       local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_TELEGRAM:-}}}"
       [[ -z "$target" ]] && { echo "Error: --to <chat_id> required (or set MEMES_DEFAULT_TELEGRAM)" >&2; exit 1; }
+      _resolved_target="$target"
       if [[ -x "$script" ]]; then
         timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
       else
@@ -563,6 +607,7 @@ cmd_send() {
       ;;
     *)
       local script="$SCRIPTS_DIR/${channel}-send-image.sh"
+      _resolved_target="${to:-}"
       if [[ -x "$script" ]]; then
         timeout "$SEND_TIMEOUT" bash "$script" "${to:-}" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
       else
@@ -575,7 +620,7 @@ cmd_send() {
   if [[ $send_rc -ne 0 ]]; then
     # Extract meaningful error: take last non-whitespace line (actual error, not CLI noise)
     local _send_err; _send_err=$(grep -v -E '^[[:space:]]*$' "$_send_err_file" 2>/dev/null | tail -1 | head -c 200)
-    _track_send "$category" "$meme_path" "$channel" "$caption" "failed" "$_send_err"
+    _track_send "$category" "$meme_path" "$channel" "$caption" "failed" "$_send_err" "$_resolved_target" "$source"
     echo "[memes] send failed (rc=$send_rc) for $(basename "$meme_path")${_send_err:+: $_send_err}, retrying with another file..." >&2
     > "$_send_err_file"  # reset for retry
     local retry_path; retry_path=$(MEMES_EXCLUDE_FILE="$(basename "$meme_path")" cmd_pick "$category" 2>/dev/null || true)
@@ -597,7 +642,7 @@ cmd_send() {
       [[ $retry_rc -ne 0 ]] && retry_result="failed"
       local _retry_err=""
       [[ "$retry_result" == "failed" ]] && _retry_err=$(grep -v -E "^[[:space:]]*\$" "$_send_err_file" 2>/dev/null | tail -1 | head -c 200)
-      _track_send "$category" "$retry_path" "$channel" "$caption" "$retry_result" "$_retry_err"
+      _track_send "$category" "$retry_path" "$channel" "$caption" "$retry_result" "$_retry_err" "$_resolved_target" "$source"
       echo "$retry_path"
       return $retry_rc
     fi
@@ -607,7 +652,7 @@ cmd_send() {
   fi
 
   # Track successful send
-  _track_send "$category" "$meme_path" "$channel" "$caption" "success"
+  _track_send "$category" "$meme_path" "$channel" "$caption" "success" "" "$_resolved_target" "$source"
   echo "$meme_path"
   return 0
 }
@@ -1544,17 +1589,40 @@ cmd_health() {
 
 cmd_wake() {
   # Pick a random file from the most dormant category (longest since last send)
-  # --send: also send to channel (default: discord #agent-memes)
-  # --to TARGET: override send target
-  # --caption TEXT: override caption
-  local do_send=false send_to="" send_caption="" send_channel=""
+  # Usage: memes wake [CATEGORY] [--send] [--to TARGET] [--caption TEXT] [--channel CH]
+  # If CATEGORY is given, wake that specific category instead of stalest.
+  local do_send=false send_to="" send_caption="" send_channel="" target_cat=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help)
+        cat <<'WAKEHELP'
+Usage: memes wake [CATEGORY] [OPTIONS]
+
+Wake a dormant meme category by picking and optionally sending a random file.
+Without CATEGORY, automatically selects the stalest (longest since last send).
+
+Options:
+  CATEGORY          Specific category to wake (e.g. debug-mood, happy)
+  --send            Actually send the picked meme (without this, just prints the pick)
+  --to TARGET       Send target (e.g. channel:123, user:456)
+  --channel CH      Platform channel override
+  --caption TEXT    Custom caption for the sent meme
+  -h, --help        Show this help
+
+Examples:
+  memes wake                          # Show stalest category + pick
+  memes wake --send                   # Send from stalest category
+  memes wake debug-mood --send        # Send from specific category
+  memes wake sad --send --to chan:123  # Send sad meme to specific target
+WAKEHELP
+        return 0
+        ;;
       --send)    do_send=true; shift ;;
       --to)      send_to="$2"; shift 2 ;;
       --caption) send_caption="$2"; shift 2 ;;
       --channel) send_channel="$2"; shift 2 ;;
-      *)         shift ;;
+      -*)        shift ;;  # skip unknown flags
+      *)         target_cat="$1"; shift ;;
     esac
   done
 
@@ -1566,36 +1634,51 @@ cmd_wake() {
     echo "Error: No tracker file at $tracker_file" >&2; exit 1
   fi
 
-  # Build list of all categories from directories
-  local -a all_cats=()
-  for dir in "$MEMES_DIR"/*/; do
-    [[ -d "$dir" ]] || continue
-    local name; name=$(basename "$dir")
-    [[ "$name" == .* || "$name" == hooks ]] && continue
-    all_cats+=("$name")
-  done
-
-  # Find the most dormant category: never sent > oldest last send
+  # If a specific category was requested, validate and use it directly
   local most_dormant=""
-  local oldest_time="9999-99-99"
-  for cat in "${all_cats[@]}"; do
-    local last_send
-    last_send=$(jq -r --arg cat "$cat" '
+  local oldest_time=""
+
+  if [[ -n "$target_cat" ]]; then
+    if [[ ! -d "$MEMES_DIR/$target_cat" ]]; then
+      echo "Error: Category '$target_cat' not found" >&2; exit 1
+    fi
+    most_dormant="$target_cat"
+    # Look up its last send time for display
+    oldest_time=$(jq -r --arg cat "$target_cat" '
       [.history[] | select(.category == $cat and (.result == "success" or .result == "sent")) | .time]
       | last // ""' "$tracker_file" 2>/dev/null)
-    if [[ -z "$last_send" || "$last_send" == "null" ]]; then
-      # Never sent — immediately pick this one
-      most_dormant="$cat"
-      oldest_time=""
-      break
-    elif [[ "$last_send" < "$oldest_time" ]]; then
-      oldest_time="$last_send"
-      most_dormant="$cat"
-    fi
-  done
+    [[ "$oldest_time" == "null" ]] && oldest_time=""
+  else
+    # Build list of all categories from directories
+    local -a all_cats=()
+    for dir in "$MEMES_DIR"/*/; do
+      [[ -d "$dir" ]] || continue
+      local name; name=$(basename "$dir")
+      [[ "$name" == .* || "$name" == hooks ]] && continue
+      all_cats+=("$name")
+    done
 
-  if [[ -z "$most_dormant" ]]; then
-    echo "Error: No categories found" >&2; exit 1
+    # Find the most dormant category: never sent > oldest last send
+    oldest_time="9999-99-99"
+    for cat in "${all_cats[@]}"; do
+      local last_send
+      last_send=$(jq -r --arg cat "$cat" '
+        [.history[] | select(.category == $cat and (.result == "success" or .result == "sent")) | .time]
+        | last // ""' "$tracker_file" 2>/dev/null)
+      if [[ -z "$last_send" || "$last_send" == "null" ]]; then
+        # Never sent — immediately pick this one
+        most_dormant="$cat"
+        oldest_time=""
+        break
+      elif [[ "$last_send" < "$oldest_time" ]]; then
+        oldest_time="$last_send"
+        most_dormant="$cat"
+      fi
+    done
+
+    if [[ -z "$most_dormant" ]]; then
+      echo "Error: No categories found" >&2; exit 1
+    fi
   fi
 
   # Pick a random file from the dormant category (reuse cmd_pick logic)
@@ -1610,7 +1693,7 @@ cmd_wake() {
     echo "💤 Waking dormant category: $most_dormant (last send: ${oldest_time:-never})" >&2
     # Auto-send to channel
     local caption="${send_caption:-💤 meme of the day — waking $most_dormant}"
-    local -a send_args=("$most_dormant" "$caption")
+    local -a send_args=("$most_dormant" "$caption" "--source" "wake")
     [[ -n "$send_to" ]] && send_args+=("--to" "$send_to")
     [[ -n "$send_channel" ]] && send_args+=("--channel" "$send_channel")
     cmd_send "${send_args[@]}"
@@ -1679,7 +1762,7 @@ cmd_dormant_blast() {
 
     # Build send args
     local caption="${send_caption:-💤 dormant blast — waking $cat}"
-    local -a send_args=("$cat" "$caption")
+    local -a send_args=("$cat" "$caption" "--source" "dormant-blast")
     [[ -n "$send_to" ]] && send_args+=("--to" "$send_to")
     [[ -n "$send_channel" ]] && send_args+=("--channel" "$send_channel")
 
@@ -2357,10 +2440,20 @@ cmd_review() {
   # Cron-friendly review check: runs coverage, logs to tracker, reports weak areas
   # Used by memes-review cron to auto-detect and surface quality issues
   # --full: include health + audit summary for comprehensive single-command cron check
+  # --auto-wake: batch auto-wake up to 3 stalest general categories when coverage is clean but staleness >threshold
   local full_mode=false
+  local auto_wake=false
+  local wake_threshold=8  # days (lowered from 10: 7d stale report + 1d grace before auto-wake)
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --full) full_mode=true; shift ;;
+      --auto-wake) auto_wake=true; shift ;;
+      --wake-threshold)
+        if [[ -n "${2:-}" ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
+          wake_threshold="$2"; shift 2
+        else
+          echo "❌ --wake-threshold requires a positive integer (days)" >&2; return 1
+        fi ;;
       *) shift ;;
     esac
   done
@@ -2400,10 +2493,15 @@ cmd_review() {
     # Freshness summary even when coverage is clean
     _review_freshness_summary
     echo ""
+    # Auto-wake: remediate critical staleness when coverage is otherwise clean
+    if [[ "$auto_wake" == true ]]; then
+      _review_auto_wake "$wake_threshold"
+    fi
     # Full mode: health + audit summary
     if [[ "$full_mode" == true ]]; then
       _review_health_summary
     fi
+    _review_repetition_summary
     _review_today_summary
     return 0
   fi
@@ -2457,9 +2555,80 @@ cmd_review() {
     _review_health_summary
   fi
 
+  _review_repetition_summary
   _review_today_summary
   echo "💡 Suggested next step: fix the easiest issue above, then re-run 'memes review'"
   return 0
+}
+
+_review_repetition_summary() {
+  # Flag categories with high sends-per-file ratio (need more variety)
+  # Uses .counts[cat] (lifetime counter, O(1)) instead of scanning history entries.
+  # Also checks 30-day recent window to distinguish "historically popular" from "currently overused".
+  local tracker="$MEMES_DIR/meme-tracker.json"
+  local threshold=5  # lifetime sends per file
+  local recent_threshold=3  # recent (30d) sends per file
+  local recent_days=30
+  local -a overused=()
+  local cutoff_date; cutoff_date=$(date -d "-${recent_days} days" +%Y-%m-%d 2>/dev/null || date -v-${recent_days}d +%Y-%m-%d 2>/dev/null)
+
+  # Pre-compute recent sends per category in one jq pass (much faster than per-cat scan)
+  local recent_json; recent_json=$(jq -r --arg cutoff "$cutoff_date" '
+    [.history[] | select(.result == "success" and (.time // "" | . >= $cutoff))]
+    | group_by(.category) | map({key: .[0].category, value: length}) | from_entries
+  ' "$tracker" 2>/dev/null)
+  [[ -z "$recent_json" || "$recent_json" == "null" ]] && recent_json="{}"
+
+  for dir in "$MEMES_DIR"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name; name=$(basename "$dir")
+    [[ "$name" == .* || "$name" == hooks ]] && continue
+    local file_count; file_count=$(find "$dir" -maxdepth 1 -type f \( -name "*.gif" -o -name "*.png" -o -name "*.jpg" -o -name "*.webp" \) | wc -l)
+    [[ "$file_count" -eq 0 ]] && continue
+    # Lifetime count from .counts (maintained by incremental tracker)
+    local send_count; send_count=$(jq -r --arg cat "$name" '.counts[$cat] // 0' "$tracker" 2>/dev/null)
+    [[ -z "$send_count" || "$send_count" == "null" ]] && send_count=0
+    # Recent count from pre-computed JSON
+    local recent_count; recent_count=$(echo "$recent_json" | jq -r --arg cat "$name" '.[$cat] // 0' 2>/dev/null)
+    [[ -z "$recent_count" || "$recent_count" == "null" ]] && recent_count=0
+    local ratio=$((send_count / file_count))
+    local recent_ratio=$((recent_count / file_count))
+    if [[ $ratio -ge $threshold ]]; then
+      overused+=("$ratio|$name|$send_count|$file_count|$recent_count|$recent_ratio")
+    fi
+  done
+
+  if [[ ${#overused[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  # Sort by ratio descending, show top 3
+  IFS=$'\n' sorted=($(printf '%s\n' "${overused[@]}" | sort -t'|' -k1,1rn)); unset IFS
+  local show=${#sorted[@]}
+  [[ $show -gt 3 ]] && show=3
+
+  echo ""
+  echo "🔁 Repetition: ${#overused[@]} categories overused (>${threshold}× sends/file)"
+  for ((i=0; i<show; i++)); do
+    local entry="${sorted[$i]}"
+    IFS='|' read -r r cat sends files recent_sends recent_r <<< "$entry"
+    if [[ $recent_r -ge $recent_threshold ]]; then
+      echo "   $cat — ${r}× lifetime, ${recent_r}× recent ${recent_days}d (${sends} total / ${files} files, ${recent_sends} in ${recent_days}d)"
+    else
+      echo "   $cat — ${r}× lifetime (${sends} sends / ${files} files) [recent: ${recent_sends} in ${recent_days}d — OK]"
+    fi
+  done
+  # Only suggest action if recent overuse detected
+  local has_recent=0
+  for entry in "${sorted[@]}"; do
+    IFS='|' read -r r cat sends files recent_sends recent_r <<< "$entry"
+    [[ $recent_r -ge $recent_threshold ]] && has_recent=1 && break
+  done
+  if [[ $has_recent -eq 1 ]]; then
+    echo "   → Add more memes to actively overused categories for variety"
+  else
+    echo "   → Historical overuse only; adaptive recency already limits rotation"
+  fi
 }
 
 _review_today_summary() {
@@ -2606,6 +2775,62 @@ _review_health_summary() {
   fi
 }
 
+_review_auto_wake() {
+  # Auto-wake stale general categories when staleness exceeds threshold
+  # Called by cmd_review --auto-wake when coverage is clean
+  # Wakes up to 3 categories per run to handle batch staleness buildup
+  local threshold="${1:-10}"
+  local max_wake=3
+  local freshness_json; freshness_json=$(cmd_freshness --json 2>/dev/null)
+  if [[ $? -ne 0 ]] || [[ -z "$freshness_json" ]]; then
+    return 0  # Silently skip if freshness unavailable
+  fi
+
+  # Find all general (non-contextual) categories exceeding threshold, sorted stalest-first
+  local stale_cats; stale_cats=$(echo "$freshness_json" | jq -r --argjson threshold "$threshold" '
+    [.categories[] | select(.stale == true and .contextual == false and .ageDays >= $threshold)]
+    | sort_by(-.ageDays) | .[].category')
+
+  if [[ -z "$stale_cats" ]]; then
+    echo "\u2705 Auto-wake: no general categories exceed ${threshold}d — skipped"
+    return 0
+  fi
+
+  local woke_count=0
+  local woke_list=()
+  while IFS= read -r cat_name; do
+    [[ -z "$cat_name" ]] && continue
+    [[ $woke_count -ge $max_wake ]] && break
+
+    local stale_days; stale_days=$(echo "$freshness_json" | jq -r --arg cat "$cat_name" '
+      [.categories[] | select(.category == $cat)] | .[0].ageDays')
+
+    echo "\U0001f4a4 Auto-wake: $cat_name (${stale_days}d stale, threshold ${threshold}d)"
+    # Send with no caption — let the meme speak for itself; diagnostic info stays in stdout/tracker
+    cmd_send "$cat_name" 2>&1 || true
+    woke_list+=("$cat_name")
+    woke_count=$((woke_count + 1))
+  done <<< "$stale_cats"
+
+  # Count remaining stale categories not woken this run
+  local total_stale; total_stale=$(echo "$stale_cats" | grep -c .)
+  local remaining=$((total_stale - woke_count))
+  if [[ $remaining -gt 0 ]]; then
+    echo "   ℹ️  ${remaining} more stale categories remain — will wake next run"
+  fi
+
+  # Update tracker status to reflect auto-wake action
+  local tracker="$MEMES_DIR/meme-tracker.json"
+  if [[ -f "$tracker" ]]; then
+    local now; now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local woke_json; woke_json=$(printf '%s\n' "${woke_list[@]}" | jq -R . | jq -s .)
+    local updated; updated=$(jq --arg ts "$now" --argjson cats "$woke_json" --argjson count "$woke_count" '
+      .lastReview.autoWake = {time: $ts, categories: $cats, count: $count}
+    ' "$tracker")
+    echo "$updated" > "$tracker"
+  fi
+}
+
 _review_freshness_summary() {
   # Show freshness snapshot: stale count + top-3 stalest categories
   local freshness_json; freshness_json=$(cmd_freshness --json 2>/dev/null)
@@ -2649,9 +2874,11 @@ _review_freshness_summary() {
 }
 
 cmd_cron_check() {
-  # Fully autonomous cron wrapper: review --full + auto-wake top stale (>14d)
-  # Designed to be the single cron entry point — no human intervention needed
-  local stale_threshold=14
+  # Fully autonomous cron wrapper — delegates to review --full --auto-wake
+  # Keeps --threshold and --dry-run flags for CLI compatibility
+  # Threshold defaults to cmd_review's wake_threshold (8d) when not overridden
+  local threshold_flag=()
+  local threshold_val=""
   local dry_run=false
 
   # Parse flags
@@ -2662,7 +2889,8 @@ cmd_cron_check() {
           echo "❌ --threshold requires a positive integer (days)" >&2
           return 1
         fi
-        stale_threshold="$2"
+        threshold_flag=(--wake-threshold "$2")
+        threshold_val="$2"
         shift 2
         ;;
       --dry-run)
@@ -2676,42 +2904,30 @@ cmd_cron_check() {
     esac
   done
 
-  # Run full review (prints report to stdout)
-  cmd_review --full
-  echo ""
-
-  # Check freshness for auto-wake candidates
-  local freshness_json; freshness_json=$(cmd_freshness --json 2>/dev/null)
-  if [[ $? -ne 0 ]] || [[ -z "$freshness_json" ]]; then
-    echo "⏭️  Freshness data unavailable — skipping auto-wake"
-    return 0
-  fi
-
-  # Find categories stale beyond threshold
-  local very_stale; very_stale=$(echo "$freshness_json" | jq -r --argjson threshold "$stale_threshold" '
-    [.categories[] | select(.stale == true and .ageDays >= $threshold)]
-    | sort_by(-.ageDays)
-    | .[0] // empty
-    | .category')
-
-  if [[ -z "$very_stale" ]]; then
-    echo "✅ No categories stale beyond ${stale_threshold}d — no auto-wake needed"
-    return 0
-  fi
-
-  local stale_days; stale_days=$(echo "$freshness_json" | jq -r --arg cat "$very_stale" '
-    [.categories[] | select(.category == $cat)] | .[0].ageDays')
-
   if [[ "$dry_run" == true ]]; then
-    echo "🧪 [DRY-RUN] Would auto-wake: $very_stale (${stale_days}d stale, threshold ${stale_threshold}d)"
+    # Dry-run: full review report without sending, then show what would wake
+    cmd_review --full
+    echo ""
+    local freshness_json; freshness_json=$(cmd_freshness --json 2>/dev/null)
+    if [[ $? -ne 0 ]] || [[ -z "$freshness_json" ]]; then
+      echo "⏭️  Freshness data unavailable — skipping auto-wake preview"
+      return 0
+    fi
+    local t_val="${threshold_val:-8}"
+    local stale_preview; stale_preview=$(echo "$freshness_json" | jq -r --argjson t "$t_val" '
+      [.categories[] | select(.stale == true and .contextual == false and .ageDays >= $t)]
+      | sort_by(-.ageDays) | .[:3][] | "   \(.category) (\(.ageDays)d)"')
+    if [[ -n "$stale_preview" ]]; then
+      echo "🧪 [DRY-RUN] Would auto-wake (up to 3):"
+      echo "$stale_preview"
+    else
+      echo "✅ No general categories stale beyond ${t_val}d — no auto-wake needed"
+    fi
     return 0
   fi
 
-  echo "🔄 Auto-waking: $very_stale (${stale_days}d stale, threshold ${stale_threshold}d)"
-  echo ""
-
-  # Wake sends to the configured default channel
-  cmd_wake --send --caption "💤 auto-wake — $very_stale hasn't been used in ${stale_days}d"
+  # Real run: delegate entirely to review --full --auto-wake
+  cmd_review --full --auto-wake "${threshold_flag[@]}"
 }
 
 cmd_retire() {
@@ -3073,6 +3289,29 @@ for gi, group in enumerate(data["groups"]):
                 print(f"   \U0001f5d1\ufe0f  Remove: {f['file']}")
                 removable.append({"survivor": best["file"], "removed": f["file"], "bytes": sz})
     else:
+        # Check for same-category dupes within this cross-category group
+        from collections import defaultdict
+        cat_files = defaultdict(list)
+        for f in group:
+            cat_files[os.path.dirname(f["file"])].append(f)
+        has_same_cat = any(len(v) > 1 for v in cat_files.values())
+        if has_same_cat:
+            for cat, cfiles in cat_files.items():
+                if len(cfiles) > 1:
+                    best = cfiles[0]
+                    for f in cfiles[1:]:
+                        fname = os.path.splitext(os.path.basename(f["file"]))[0]
+                        best_fname = os.path.splitext(os.path.basename(best["file"]))[0]
+                        if len(fname) > len(best_fname) or (len(fname) == len(best_fname) and fname < best_fname):
+                            best = f
+                    print(f"   \u26a0\ufe0f  Same-category near-dupes in {cat}/:")
+                    print(f"   \u2705 Keep: {best['file']}")
+                    for f in cfiles:
+                        if f["file"] != best["file"]:
+                            fpath = os.path.join(memes_dir, f["file"])
+                            sz = os.path.getsize(fpath) if os.path.exists(fpath) else 0
+                            print(f"   \U0001f5d1\ufe0f  Remove: {f['file']} (same-cat near-dupe)")
+                            removable.append({"survivor": best["file"], "removed": f["file"], "bytes": sz})
         print("   \u2139\ufe0f  Cross-category \u2014 kept in all locations (different semantic contexts)")
         print("   \U0001f4a1 To consolidate, use: memes retire <source> <target>")
     print()
@@ -3242,6 +3481,7 @@ cmd_dedup() {
         echo "  Find duplicate files across/within categories." >&2
         echo "  Default: exact md5 match. --visual uses perceptual hash (near-duplicates)." >&2
         echo "  --threshold N: hamming distance for pHash (default 10, lower=stricter)." >&2
+        echo "  Uses multi-frame sampling for GIFs (reduces false positives)." >&2
         echo "  Default: dry-run. --fix removes duplicates, merges tags, updates tracker." >&2
         return 0 ;;
       *) echo "Usage: memes dedup [--fix] [--visual|--phash [--threshold N]]" >&2; return 1 ;;
@@ -3323,6 +3563,7 @@ cmd_dedup() {
 
     # Decide which to keep: prefer longer filename (more descriptive), then alphabetically first
     # For cross-category, keep all (different semantic contexts) — just report
+    # BUT also check for same-category dupes within the cross-category group
     if [[ $unique_cats -eq 1 ]]; then
       # Same category: keep the best-named file, remove others
       local best="${files[0]}"
@@ -3352,6 +3593,57 @@ cmd_dedup() {
         fi
       done
     else
+      # Cross-category group: check for same-category dupes within it
+      local -a _seen_cats=()
+      local -a _dup_within_cats=()
+      local _has_same_cat_dupes=false
+      for f in "${files[@]}"; do
+        local _cat
+        _cat=$(dirname "$f")
+        if printf '%s\n' "${_seen_cats[@]}" 2>/dev/null | grep -qxF "$_cat"; then
+          _has_same_cat_dupes=true
+          if ! printf '%s\n' "${_dup_within_cats[@]}" 2>/dev/null | grep -qxF "$_cat"; then
+            _dup_within_cats+=("$_cat")
+          fi
+        fi
+        _seen_cats+=("$_cat")
+      done
+
+      if [[ "$_has_same_cat_dupes" == true ]]; then
+        # Process same-category dupes within this cross-category group
+        for _dcat in "${_dup_within_cats[@]}"; do
+          local -a _cat_files=()
+          for f in "${files[@]}"; do
+            if [[ "$(dirname "$f")" == "$_dcat" ]]; then
+              _cat_files+=("$f")
+            fi
+          done
+          # Pick best to keep (longest descriptive name)
+          local _best="${_cat_files[0]}"
+          for f in "${_cat_files[@]:1}"; do
+            local _fname _best_fname
+            _fname=$(basename "$f" | sed 's/\.[^.]*$//')
+            _best_fname=$(basename "$_best" | sed 's/\.[^.]*$//')
+            if [[ ${#_fname} -gt ${#_best_fname} ]] || { [[ ${#_fname} -eq ${#_best_fname} ]] && [[ "$_fname" < "$_best_fname" ]]; }; then
+              _best="$f"
+            fi
+          done
+          echo "   ⚠️  Same-category dupes in $_dcat/:"
+          echo "   ✅ Keep: $_best"
+          for f in "${_cat_files[@]}"; do
+            if [[ "$f" != "$_best" ]]; then
+              local sz
+              sz=$(stat -c%s "$MEMES_DIR/$f" 2>/dev/null || echo 0)
+              bytes_saved=$((bytes_saved + sz))
+              total_removable=$((total_removable + 1))
+              echo "   🗑️  Remove: $f (same-cat dupe)"
+              remove_files+=("$f")
+              remove_keys+=("$f")
+              merge_pairs+=("$_best|$f")
+            fi
+          done
+        done
+      fi
       echo "   ℹ️  Cross-category — kept in all locations (different semantic contexts)"
       echo "   💡 To consolidate, use: memes retire <source> <target>"
     fi

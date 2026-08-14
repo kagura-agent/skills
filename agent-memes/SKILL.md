@@ -18,6 +18,8 @@ Memes are communication. Use them like a human would in chat.
 
 ```bash
 memes send happy "好开心！"                    # Pick & send (auto-detects platform)
+memes send happy --file memes/happy/dance.gif  # Send a specific file (skip random pick)
+memes send happy --source nudge              # Attribute send source (tracker records source: nudge)
 memes send facepalm --to channel:123456       # Send to specific channel
 memes send feishu cute-animals "看猫！" --to user:xxx  # Send via Feishu
 memes send telegram wow "哇！"                # Send via Telegram
@@ -72,6 +74,7 @@ Platform-specific scripts live in `scripts/`. Add a new `<platform>-send-image.s
 
 ```bash
 memes send <category> [caption]           # Auto-detect platform from OPENCLAW_CHANNEL (default: discord)
+memes send <category> --file <path>       # Send a specific file instead of random pick
 memes send <category> --to <target>       # Specify target
 memes send --channel telegram <category>  # Specify platform explicitly
 memes send feishu <category>              # Platform as first arg also works

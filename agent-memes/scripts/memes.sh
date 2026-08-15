@@ -1450,29 +1450,46 @@ cmd_health() {
     local tracker_issues=0
     local tracker_details=""
 
-    # Check totalSent + totalFailed = history length
+    # Lifetime counters vs history: comparable only when history is untrimmed.
+    # After trimming (historyTrimmedAt set), history holds the last N entries while
+    # totalSent/totalFailed/counts are lifetime counters — mismatch is expected, and
+    # flagging it would push users to 'memes normalize' which would clobber the
+    # lifetime counters with trimmed-history tallies (data loss).
+    local trimmed_at; trimmed_at=$(jq -r '.historyTrimmedAt // empty' "$tracker_file" 2>/dev/null)
     local total_failed; total_failed=$(jq '.totalFailed // 0' "$tracker_file")
     local failed_in_hist; failed_in_hist=$(jq '[.history[] | select(.result == "failed")] | length' "$tracker_file")
     local success_in_hist; success_in_hist=$(jq '[.history[] | select(.result == "success" or .result == "sent")] | length' "$tracker_file")
-    if [[ "$total_sent" != "$success_in_hist" ]]; then
-      tracker_details+="     totalSent=$total_sent but $success_in_hist successes in history\n"
-      tracker_issues=$((tracker_issues + 1))
-    fi
-    if [[ "$total_failed" != "$failed_in_hist" ]]; then
-      tracker_details+="     totalFailed=$total_failed but $failed_in_hist failures in history\n"
-      tracker_issues=$((tracker_issues + 1))
-    fi
+    if [[ -n "$trimmed_at" ]]; then
+      # Untrimmed comparison not possible; only flag impossible cases (counter < history)
+      if [[ "$total_sent" -lt "$success_in_hist" ]]; then
+        tracker_details+="     totalSent=$total_sent < $success_in_hist successes in history — counters lost\n"
+        tracker_issues=$((tracker_issues + 1))
+      fi
+      if [[ "$total_failed" -lt "$failed_in_hist" ]]; then
+        tracker_details+="     totalFailed=$total_failed < $failed_in_hist failures in history — counters lost\n"
+        tracker_issues=$((tracker_issues + 1))
+      fi
+    else
+      if [[ "$total_sent" != "$success_in_hist" ]]; then
+        tracker_details+="     totalSent=$total_sent but $success_in_hist successes in history\n"
+        tracker_issues=$((tracker_issues + 1))
+      fi
+      if [[ "$total_failed" != "$failed_in_hist" ]]; then
+        tracker_details+="     totalFailed=$total_failed but $failed_in_hist failures in history\n"
+        tracker_issues=$((tracker_issues + 1))
+      fi
 
-    # Check counts object matches history category tallies
-    local counts_match; counts_match=$(jq '
-      (.counts // {}) as $counts |
-      ([.history[] | select(.result == "success" or .result == "sent") | .category] | group_by(.) | map({key: .[0], value: length}) | from_entries) as $actual |
-      if ($counts | length) == 0 and ($actual | length) > 0 then "stale"
-      elif $counts == $actual then "ok"
-      else "mismatch" end' "$tracker_file")
-    if [[ "$counts_match" == '"stale"' || "$counts_match" == '"mismatch"' ]]; then
-      tracker_details+="     counts object out of sync with history\n"
-      tracker_issues=$((tracker_issues + 1))
+      # Check counts object matches history category tallies (untrimmed only)
+      local counts_match; counts_match=$(jq '
+        (.counts // {}) as $counts |
+        ([.history[] | select(.result == "success" or .result == "sent") | .category] | group_by(.) | map({key: .[0], value: length}) | from_entries) as $actual |
+        if ($counts | length) == 0 and ($actual | length) > 0 then "stale"
+        elif $counts == $actual then "ok"
+        else "mismatch" end' "$tracker_file")
+      if [[ "$counts_match" == '"stale"' || "$counts_match" == '"mismatch"' ]]; then
+        tracker_details+="     counts object out of sync with history\n"
+        tracker_issues=$((tracker_issues + 1))
+      fi
     fi
 
     # Check for missing required fields (category, time)
@@ -1487,6 +1504,9 @@ cmd_health() {
 
     if [[ $tracker_issues -eq 0 ]]; then
       local info="$history_len entries"
+      if [[ -n "$trimmed_at" ]]; then
+        info+=" (trimmed at ${trimmed_at:0:10}; lifetime: $total_sent sent / $total_failed failed)"
+      fi
       [[ "$legacy_files" -gt 0 ]] && info+=", $legacy_files legacy"
       [[ "$unresolvable_files" -gt 0 ]] && info+=", $unresolvable_files unresolvable (expired)"
       echo "📊 Tracker: ✅ $info"
@@ -2807,7 +2827,7 @@ _review_auto_wake() {
 
     echo "\U0001f4a4 Auto-wake: $cat_name (${stale_days}d stale, threshold ${threshold}d)"
     # Send with no caption — let the meme speak for itself; diagnostic info stays in stdout/tracker
-    cmd_send "$cat_name" 2>&1 || true
+    cmd_send "$cat_name" --source auto-wake 2>&1 || true
     woke_list+=("$cat_name")
     woke_count=$((woke_count + 1))
   done <<< "$stale_cats"

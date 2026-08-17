@@ -534,6 +534,13 @@ cmd_send() {
   done
   [[ -z "$category" ]] && { echo "Usage: memes send <category> [caption] [--to target] [--channel platform] [--file path]" >&2; exit 1; }
 
+  # NUDGE.md L19: 所有自动化触发（nudge / cron / patrol）必须带 --source <名称>。
+  # 缺失时默认 'chat'（交互式发送），保证 tracker 归因永不缺失；stderr 警告提示调用方。
+  if [[ -z "$source" ]]; then
+    source="chat"
+    echo "⚠️  --source 未提供，已记录为 'chat'。NUDGE.md L19 要求自动化发送必须传 --source <名称>。" >&2
+  fi
+
   # Resolve alias so tracker records canonical category, not alias
   category=$(_resolve_category "$category")
 
@@ -2628,7 +2635,11 @@ _review_repetition_summary() {
   [[ $show -gt 3 ]] && show=3
 
   echo ""
-  echo "🔁 Repetition: ${#overused[@]} categories overused (>${threshold}× sends/file)"
+  if [[ ${#overused[@]} -gt $show ]]; then
+    echo "🔁 Repetition: ${#overused[@]} categories overused (>${threshold}× sends/file), showing top ${show}"
+  else
+    echo "🔁 Repetition: ${#overused[@]} categories overused (>${threshold}× sends/file)"
+  fi
   for ((i=0; i<show; i++)); do
     local entry="${sorted[$i]}"
     IFS='|' read -r r cat sends files recent_sends recent_r <<< "$entry"
@@ -2812,7 +2823,7 @@ _review_auto_wake() {
     | sort_by(-.ageDays) | .[].category')
 
   if [[ -z "$stale_cats" ]]; then
-    echo "\u2705 Auto-wake: no general categories exceed ${threshold}d — skipped"
+    echo "✅ Auto-wake: no general categories exceed ${threshold}d — skipped"
     return 0
   fi
 
@@ -2825,7 +2836,7 @@ _review_auto_wake() {
     local stale_days; stale_days=$(echo "$freshness_json" | jq -r --arg cat "$cat_name" '
       [.categories[] | select(.category == $cat)] | .[0].ageDays')
 
-    echo "\U0001f4a4 Auto-wake: $cat_name (${stale_days}d stale, threshold ${threshold}d)"
+    echo "💤 Auto-wake: $cat_name (${stale_days}d stale, threshold ${threshold}d)"
     # Send with no caption — let the meme speak for itself; diagnostic info stays in stdout/tracker
     cmd_send "$cat_name" --source auto-wake 2>&1 || true
     woke_list+=("$cat_name")
@@ -2878,7 +2889,12 @@ _review_freshness_summary() {
       | .[]')
     echo "   Top stalest:"
     echo "$top3"
-    echo "   → Run: memes wake  or  memes dormant-blast"
+    # Only suggest wake/blast if there are stale GENERAL categories (contextual ones can't be force-sent)
+    if [[ "$general_stale" -gt 0 ]]; then
+      echo "   → Run: memes wake  or  memes dormant-blast"
+    else
+      echo "   → Contextual-only staleness (greeting-*) — wait for a fitting moment, do not force-send"
+    fi
   fi
 
   # Update tracker lastReview with freshness data

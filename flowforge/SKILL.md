@@ -1,20 +1,21 @@
 ---
-name: flowforge
-description: "MANDATORY workflow runner for multi-step tasks. ANY task matching these intents MUST go through FlowForge — do not spawn subagents or execute directly without reading this skill first. Intents: (1) 打工, contribute, work on issues, PR, scan issues (2) 学习, study, research (3) 反思, reflect, review (4) audit, daily-audit, tool-review, evolve. If you're about to do any of these without FlowForge, STOP and read this skill. NOT for: simple one-off tasks, quick questions, or tasks without a matching workflow."
+name: "flowforge"
+description: "Correct FlowForge 1.1.2 start/resume and multi-instance CLI usage."
 ---
 
 # FlowForge Workflow Runner
 
 Execute multi-step workflows defined in YAML files using the FlowForge state machine engine.
 
-> **COST OF NOT CALLING:** You skip steps. Ad-hoc execution always misses something — scout, reflect, verify. FlowForge exists because "I'll just do it manually" has failed repeatedly. Every time you bypass it, you're betting your memory is better than the workflow. It isn't.
-
 ## Prerequisites
 
-FlowForge CLI must be installed. Check with:
+Check the installed CLI contract before use:
 
 ```bash
 flowforge --version
+flowforge start --help
+flowforge status --help
+flowforge next --help
 ```
 
 If the command fails or is not found, run the setup flow in [setup.md](setup.md) before proceeding.
@@ -31,23 +32,35 @@ If the command fails or is not found, run the setup flow in [setup.md](setup.md)
 | 工具回顾 / tool review | `tool-review` |
 | 进化 / evolve / 执行审计提案 | `evolve` |
 
-## Core Loop
+## Authoritative Lifecycle
 
-### 1. Start
-
-```bash
-flowforge start <workflow>
-```
-
-### 2. Get Action
+### 1. Inspect active instances first
 
 ```bash
-flowforge run <workflow>
+flowforge active
 ```
 
-This returns JSON: `{ action: { type, task, branches, ... } }`
+- If the target workflow already has an active instance, **do not start or run it again**.
+- Resume it with `status -w <workflow>` and then `next -w <workflow>`.
+- If it is genuinely stale, inspect its current node before using the workflow's explicit stale-recovery procedure.
 
-### 3. Execute by Action Type
+### 2. Start only when no target instance exists
+
+```bash
+flowforge start <workflow-or-yaml-path>
+```
+
+`start` creates a new instance. It must never be followed by `flowforge run` for the same task.
+
+### 3. Get the current action
+
+```bash
+flowforge status -w <workflow>
+```
+
+Read the task and branches. The target workflow name is the YAML `name` field, which may differ from its filename.
+
+### 4. Execute by action type
 
 **`type: 'spawn'`** → Node has `executor: subagent`. **MUST spawn a sub-agent:**
 
@@ -59,15 +72,15 @@ sessions_spawn(
 )
 ```
 
-Wait for sub-agent to complete. Collect its output.
+Wait for the sub-agent to complete. Collect its output.
 
-⚠️ **NEVER execute spawn tasks yourself in the main session.** The whole point of subagent nodes is delegation. If you do it yourself, you're blocking the main session and defeating the purpose.
+⚠️ **NEVER execute spawn tasks yourself in the main session.**
 
-**`type: 'prompt'`** → Node needs human/agent judgment. Execute the task directly in the main session. This is for decision-making, not heavy work.
+**`type: 'prompt'`** → Node needs human/agent judgment. Execute the task directly in the main session.
 
 **`type: 'complete'`** → Workflow finished. Report results.
 
-### 3b. Goal-Drift Check (spawn nodes only)
+### 4b. Goal-drift check (spawn nodes only)
 
 After a sub-agent returns, verify its output addresses the stated task:
 
@@ -77,47 +90,43 @@ bash ~/.openclaw/workspace/tools/goal-drift-check.sh \
   --result "<subagent output summary>"
 ```
 
-If `⚠️ DRIFT DETECTED`: investigate before advancing — the sub-agent may have wandered.
-Add `--verbose` for detailed token analysis.
+If `⚠️ DRIFT DETECTED`, investigate before advancing.
 
-Based on eval-view's Jaccard token overlap baseline (deterministic, zero LLM cost).
-
-### 4. Advance
-
-After getting the result (from sub-agent output or your own work):
+### 5. Advance the same instance explicitly
 
 ```bash
-echo "<result summary including 'Branch: N' if applicable>" | flowforge advance
+flowforge next -w <workflow> --branch <N> --result "<concise result summary>"
 ```
 
-Or:
+- Use the selected branch number whenever branches are shown.
+- Use `-w <workflow>` on **every** `status`, `next`, and `advance` call when more than one instance can exist.
+- `flowforge advance -w <workflow> --result "..."` is supported as a compatibility path, but `next -w` is preferred.
+- Advance immediately after a node is completed, before logging or unrelated work.
+
+### 6. `run` is not a resume command
+
+In FlowForge 1.1.2, `flowforge run <workflow>` starts a workflow and does **not** accept `-w`. Do not use either of these patterns:
 
 ```bash
-flowforge advance --result "<result summary>"
+flowforge start <workflow> && flowforge run <workflow>
+flowforge run -w <workflow>
 ```
-
-The result should include `Branch: N` (e.g., "Branch: 1") if the node had branches, so the engine knows which path to take.
-
-### 5. Repeat
-
-Go back to step 2. Loop until `type: 'complete'`.
 
 ## Rules
 
-- **spawn = sessions_spawn.** Not exec, not Claude Code CLI, not doing it yourself. OpenClaw sub-agents.
+- **spawn = sessions_spawn.** Not exec, not Claude Code CLI, not doing it yourself.
 - **Never skip nodes.** Execute every node's task before advancing.
 - **Run to completion.** Do not reply to the user mid-workflow. Execute all nodes, then report.
-- **State persists.** Workflows survive session restarts. Use `flowforge active` to resume.
+- **State persists.** Workflows survive session restarts. Resume explicitly; do not create duplicates.
 - **Post-run:** Record results in `memory/YYYY-MM-DD.md`.
 
-## Manual Mode (when not using run/advance)
-
-If you prefer step-by-step control:
+## Manual recovery
 
 ```bash
-flowforge status          # See current task
-# ... execute task ...
-flowforge next --branch N # Advance (N = branch number if branching)
+flowforge active
+flowforge status -w <workflow>
+# execute only the displayed node task
+flowforge next -w <workflow> --branch <N> --result "..."
 ```
 
 ## Creating New Workflows
@@ -130,7 +139,7 @@ start: first-node
 nodes:
   first-node:
     task: What to do
-    executor: subagent    # spawn a sub-agent for this node
+    executor: subagent
     next: second-node
   second-node:
     task: Make a decision

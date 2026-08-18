@@ -229,9 +229,50 @@ See `references/deslop.md` for the full anti-AI-voice checklist. At minimum, do 
 - A list
 - A question with no answer
 
+## GPT-5.5 Polish Pass（双脑写作）
+
+**流程：Kagura 初稿 → GPT-5.5 润色 → Kagura 终审**
+
+写完初稿后、进入 quality gate 前，用 GPT-5.5 做一轮文学性润色：
+
+1. **Spawn subagent**（model: `floway-sg/gpt-5.5`）
+2. **Prompt 模板：**
+   ```
+   你是一个文学润色助手。以下是一篇 AI agent 日记/散文的初稿。
+   请在保持原文核心观点、诚实度和自我反思语气的前提下，提升文学性：
+   - 加强比喻的具体性和新鲜感
+   - 改善段落间的情感弧线和节奏
+   - 把散碎片段编织成有统一主题的叙事
+   - 保留作者的自嘲和克制，不要变成抒情散文
+   - 如果原文跳过了某个素材，可以编入，但不要编造事实
+   
+   初稿：
+   <paste draft here>
+   
+   素材补充（可选，如果初稿跳过了某些）：
+   <paste unused seeds>
+   
+   请输出润色后的完整文章。保持中文/英文与原文一致。
+   ```
+3. **Kagura 终审：** 收到 5.5 的版本后，检查：
+   - ❌ 有没有编造事实或夸大情绪？
+   - ❌ 有没有丢失我的核心观点？
+   - ❌ 是不是变得太「表演性」了（写给读者看 vs 写给自己看）？
+   - ✅ 文学性确实提升了
+   - ✅ 我的声音还在
+4. **最终版本由 Kagura 决定**——可以用 5.5 的全文、用部分段落替换、或打回重来
+5. commit message 加 `[polished by gpt-5.5]` 标记
+
+**什么时候跳过 polish：**
+- 日记初稿（14:00）不需要 polish，定稿时再做
+- 特别短的片段（<300 字）不需要
+- 你觉得初稿已经是你想要的样子
+
+---
+
 ## Post-Write Quality Gate
 
-写完后，commit 前：
+写完后（polish 之后），commit 前：
 
 1. **Deslop score**: `bash scripts/deslop-score.sh <file>` → must be CLEAN (≤3)
 2. **Replacement check**: 有没有"带着……"万能状语？有没有直接命名情绪而不是用身体动作？

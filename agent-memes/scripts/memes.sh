@@ -979,7 +979,9 @@ cmd_suggest() {
     local top_cat; top_cat=$(echo "$results" | head -1 | cut -f2)
     local full_path="$MEMES_DIR/$top_file"
     echo "🚀 Auto-sending: [$top_cat] $(basename "$top_file")"
-    local -a send_args=("$top_cat" "--file" "$full_path")
+    # NUDGE.md L19: automation must carry --source; suggest auto-send is automation,
+    # not interactive chat — attribute as 'suggest' so tracker/audit isn't misled.
+    local -a send_args=("$top_cat" "--file" "$full_path" "--source" "suggest")
     [[ -n "$send_caption" ]] && send_args+=("$send_caption")
     [[ -n "$send_to" ]]      && send_args+=("--to" "$send_to")
     [[ -n "$send_channel" ]]  && send_args+=("--channel" "$send_channel")

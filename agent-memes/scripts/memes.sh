@@ -519,7 +519,7 @@ _track_send() {
 cmd_send() {
   local category="" caption="" to="" channel="${OPENCLAW_CHANNEL:-discord}" account="" file_override="" source=""
   # Detect platform as first arg (overrides env default)
-  [[ "${1:-}" =~ ^(discord|feishu|telegram|whatsapp|slack|line|qq|wechat)$ ]] && { channel="$1"; shift; }
+  [[ "${1:-}" =~ ^(discord|feishu|telegram|whatsapp|slack|line|qq|wechat|cove)$ ]] && { channel="$1"; shift; }
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --category|-c)  category="$2"; shift 2 ;;
@@ -577,6 +577,17 @@ cmd_send() {
         timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
       else
         _send_openclaw "$meme_path" "$caption" "channel:$target" "$channel" "$account" 2>>"$_send_err_file" || send_rc=$?
+      fi
+      ;;
+    cove)
+      local script="$SCRIPTS_DIR/cove-send-image.sh"
+      local target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_COVE:-}}}"
+      [[ -z "$target" ]] && { echo "Error: --to <channel_id> required (or set MEMES_DEFAULT_COVE)" >&2; exit 1; }
+      _resolved_target="$target"
+      if [[ -x "$script" ]]; then
+        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
+      else
+        _send_openclaw "$meme_path" "$caption" "$to" "$channel" "$account" 2>>"$_send_err_file" || send_rc=$?
       fi
       ;;
     feishu)
@@ -641,6 +652,14 @@ cmd_send() {
             timeout "$SEND_TIMEOUT" bash "$SCRIPTS_DIR/discord-send-image.sh" "$r_target" "$retry_path" "$caption" 2>>"$_send_err_file" || retry_rc=$?
           else
             _send_openclaw "$retry_path" "$caption" "channel:$r_target" "$channel" "$account" 2>>"$_send_err_file" || retry_rc=$?
+          fi
+          ;;
+        cove)
+          local r_target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_COVE:-}}}"
+          if [[ -x "$SCRIPTS_DIR/cove-send-image.sh" ]]; then
+            timeout "$SEND_TIMEOUT" bash "$SCRIPTS_DIR/cove-send-image.sh" "$r_target" "$retry_path" "$caption" 2>>"$_send_err_file" || retry_rc=$?
+          else
+            _send_openclaw "$retry_path" "$caption" "$to" "$channel" "$account" 2>>"$_send_err_file" || retry_rc=$?
           fi
           ;;
         *) _send_openclaw "$retry_path" "$caption" "$to" "$channel" "$account" 2>>"$_send_err_file" || retry_rc=$? ;;
@@ -2470,13 +2489,21 @@ cmd_review() {
   # Used by memes-review cron to auto-detect and surface quality issues
   # --full: include health + audit summary for comprehensive single-command cron check
   # --auto-wake: batch auto-wake up to 3 stalest general categories when coverage is clean but staleness >threshold
+  # --channel PLATFORM: delivery platform for auto-wake sends (default: OPENCLAW_CHANNEL/discord)
   local full_mode=false
   local auto_wake=false
   local wake_threshold=8  # days (lowered from 10: 7d stale report + 1d grace before auto-wake)
+  local wake_channel=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --full) full_mode=true; shift ;;
       --auto-wake) auto_wake=true; shift ;;
+      --channel)
+        if [[ -n "${2:-}" ]]; then
+          wake_channel="$2"; shift 2
+        else
+          echo "❌ --channel requires a platform name" >&2; return 1
+        fi ;;
       --wake-threshold)
         if [[ -n "${2:-}" ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
           wake_threshold="$2"; shift 2
@@ -2524,7 +2551,7 @@ cmd_review() {
     echo ""
     # Auto-wake: remediate critical staleness when coverage is otherwise clean
     if [[ "$auto_wake" == true ]]; then
-      _review_auto_wake "$wake_threshold"
+      _review_auto_wake "$wake_threshold" "$wake_channel"
     fi
     # Full mode: health + audit summary
     if [[ "$full_mode" == true ]]; then
@@ -2812,7 +2839,9 @@ _review_auto_wake() {
   # Auto-wake stale general categories when staleness exceeds threshold
   # Called by cmd_review --auto-wake when coverage is clean
   # Wakes up to 3 categories per run to handle batch staleness buildup
+  # $2: optional platform override for delivery (e.g. cove)
   local threshold="${1:-10}"
+  local wake_channel="${2:-}"
   local max_wake=3
   local freshness_json; freshness_json=$(cmd_freshness --json 2>/dev/null)
   if [[ $? -ne 0 ]] || [[ -z "$freshness_json" ]]; then
@@ -2840,7 +2869,9 @@ _review_auto_wake() {
 
     echo "💤 Auto-wake: $cat_name (${stale_days}d stale, threshold ${threshold}d)"
     # Send with no caption — let the meme speak for itself; diagnostic info stays in stdout/tracker
-    cmd_send "$cat_name" --source auto-wake 2>&1 || true
+    local wake_args=("$cat_name" --source auto-wake)
+    [[ -n "$wake_channel" ]] && wake_args+=(--channel "$wake_channel")
+    cmd_send "${wake_args[@]}" 2>&1 || true
     woke_list+=("$cat_name")
     woke_count=$((woke_count + 1))
   done <<< "$stale_cats"

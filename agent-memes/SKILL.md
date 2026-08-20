@@ -137,7 +137,7 @@ memes dormant-blast 5 --channel telegram --caption "☀️ wake up!"  # Platform
 **`dormant-blast [n]`** — Send up to N memes, one per dormant category, ordered by staleness (oldest first). Options:
 - `[n]` — max memes to send (default: 1)
 - `--to <target>` — delivery target (e.g. `channel:123456`)
-- `--channel <platform>` — platform override (discord/telegram/feishu/line)
+- `--channel <platform>` — platform override (discord/telegram/feishu/line/cove)
 - `--caption <text>` — custom caption (default: "💤 dormant blast — waking <category>")
 - 1s delay between sends to avoid rate limiting; skips failed sends and continues
 

@@ -141,7 +141,10 @@ case "$PLATFORM" in
       ACCT="${COVE_ACCOUNT:-}"
       _read_config "(() => {
         const accts = c.channels?.cove?.accounts || {};
-        const name = '$ACCT' || Object.keys(accts)[0] || '';
+        // Explicit account wins; otherwise prefer the 'default' (primary) account,
+        // NOT Object.keys()[0] — object key order is insertion order, so a later-added
+        // account like 'su' would silently become the default sender.
+        const name = '$ACCT' || (Object.keys(accts).includes('default') ? 'default' : Object.keys(accts)[0]) || '';
         return accts[name]?.token || c.channels?.cove?.token || '';
       })()" || { echo "Error: Set COVE_BOT_TOKEN or configure openclaw.json" >&2; exit 1; }
     fi

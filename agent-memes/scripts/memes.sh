@@ -585,7 +585,7 @@ cmd_send() {
       [[ -z "$target" ]] && { echo "Error: --to <channel_id> required (or set MEMES_DEFAULT_COVE)" >&2; exit 1; }
       _resolved_target="$target"
       if [[ -x "$script" ]]; then
-        timeout "$SEND_TIMEOUT" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
+        timeout "$SEND_TIMEOUT" env COVE_ACCOUNT="$account" bash "$script" "$target" "$meme_path" "$caption" 2>>"$_send_err_file" || send_rc=$?
       else
         _send_openclaw "$meme_path" "$caption" "$to" "$channel" "$account" 2>>"$_send_err_file" || send_rc=$?
       fi
@@ -663,7 +663,7 @@ cmd_send() {
         cove)
           local r_target="${to:-${MEMES_CURRENT_TARGET:-${MEMES_DEFAULT_COVE:-}}}"
           if [[ -x "$SCRIPTS_DIR/cove-send-image.sh" ]]; then
-            timeout "$SEND_TIMEOUT" bash "$SCRIPTS_DIR/cove-send-image.sh" "$r_target" "$retry_path" "$caption" 2>>"$_send_err_file" || retry_rc=$?
+            timeout "$SEND_TIMEOUT" env COVE_ACCOUNT="$account" bash "$SCRIPTS_DIR/cove-send-image.sh" "$r_target" "$retry_path" "$caption" 2>>"$_send_err_file" || retry_rc=$?
           else
             _send_openclaw "$retry_path" "$caption" "$to" "$channel" "$account" 2>>"$_send_err_file" || retry_rc=$?
           fi

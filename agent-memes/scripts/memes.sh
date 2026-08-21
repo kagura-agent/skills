@@ -639,6 +639,12 @@ cmd_send() {
     # Extract meaningful error: take last non-whitespace line (actual error, not CLI noise)
     local _send_err; _send_err=$(grep -v -E '^[[:space:]]*$' "$_send_err_file" 2>/dev/null | tail -1 | head -c 200)
     _track_send "$category" "$meme_path" "$channel" "$caption" "failed" "$_send_err" "$_resolved_target" "$source"
+    # Deterministic errors (invalid target/channel) won't be fixed by retrying a different file — skip auto-retry
+    if [[ "$_send_err" =~ [Uu]nknown[[:space:]]+[Cc]hannel|10003|Channel[[:space:]]+not[[:space:]]+found|Invalid[[:space:]]+target|404[[:space:]] ]]; then
+      echo "[memes] send failed: deterministic target error (${_send_err}), skipping file retry" >&2
+      echo "$meme_path"
+      return $send_rc
+    fi
     echo "[memes] send failed (rc=$send_rc) for $(basename "$meme_path")${_send_err:+: $_send_err}, retrying with another file..." >&2
     > "$_send_err_file"  # reset for retry
     local retry_path; retry_path=$(MEMES_EXCLUDE_FILE="$(basename "$meme_path")" cmd_pick "$category" 2>/dev/null || true)

@@ -2498,12 +2498,14 @@ cmd_review() {
   # --channel PLATFORM: delivery platform for auto-wake sends (default: OPENCLAW_CHANNEL/discord)
   local full_mode=false
   local auto_wake=false
+  local dry_run=false
   local wake_threshold=8  # days (lowered from 10: 7d stale report + 1d grace before auto-wake)
   local wake_channel=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --full) full_mode=true; shift ;;
       --auto-wake) auto_wake=true; shift ;;
+      --dry-run) dry_run=true; shift ;;
       --channel)
         if [[ -n "${2:-}" ]]; then
           wake_channel="$2"; shift 2
@@ -2557,7 +2559,7 @@ cmd_review() {
     echo ""
     # Auto-wake: remediate critical staleness when coverage is otherwise clean
     if [[ "$auto_wake" == true ]]; then
-      _review_auto_wake "$wake_threshold" "$wake_channel"
+      _review_auto_wake "$wake_threshold" "$wake_channel" "$dry_run"
     fi
     # Full mode: health + audit summary
     if [[ "$full_mode" == true ]]; then
@@ -2846,8 +2848,10 @@ _review_auto_wake() {
   # Called by cmd_review --auto-wake when coverage is clean
   # Wakes up to 3 categories per run to handle batch staleness buildup
   # $2: optional platform override for delivery (e.g. cove)
+  # $3: dry-run — print would-send list without sending or updating tracker
   local threshold="${1:-10}"
   local wake_channel="${2:-}"
+  local dry_run="${3:-false}"
   local max_wake=3
   local freshness_json; freshness_json=$(cmd_freshness --json 2>/dev/null)
   if [[ $? -ne 0 ]] || [[ -z "$freshness_json" ]]; then
@@ -2874,6 +2878,11 @@ _review_auto_wake() {
       [.categories[] | select(.category == $cat)] | .[0].ageDays')
 
     echo "💤 Auto-wake: $cat_name (${stale_days}d stale, threshold ${threshold}d)"
+    if [[ "$dry_run" == true ]]; then
+      woke_list+=("$cat_name")
+      woke_count=$((woke_count + 1))
+      continue
+    fi
     # Send with no caption — let the meme speak for itself; diagnostic info stays in stdout/tracker
     local wake_args=("$cat_name" --source auto-wake)
     [[ -n "$wake_channel" ]] && wake_args+=(--channel "$wake_channel")
@@ -2889,9 +2898,9 @@ _review_auto_wake() {
     echo "   ℹ️  ${remaining} more stale categories remain — will wake next run"
   fi
 
-  # Update tracker status to reflect auto-wake action
+  # Update tracker status to reflect auto-wake action (skipped in dry-run)
   local tracker="$MEMES_DIR/meme-tracker.json"
-  if [[ -f "$tracker" ]]; then
+  if [[ "$dry_run" != true ]] && [[ -f "$tracker" ]]; then
     local now; now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     local woke_json; woke_json=$(printf '%s\n' "${woke_list[@]}" | jq -R . | jq -s .)
     local updated; updated=$(jq --arg ts "$now" --argjson cats "$woke_json" --argjson count "$woke_count" '

@@ -58,6 +58,17 @@ openclaw message send --channel discord --account kagura \
 
 注意：media 上传目前有 Content-Type 问题待修，先发文字+路径。
 
+## ⚠️ 查看生成结果（硬规则）
+
+**不要用 `read` 读生成的大图。** 原因：read 会把整张图 base64 塞进上下文（1024px 以上的 PNG 轻松 1.5MB+ → 50 万 token），直接撑爆模型窗口，任务必挂（2026-08-21 canvas-loop 首次运行就死在这）。
+
+当前主模型 deepseek-v4-flash **不支持视觉**（input: ["text"]），read 图本身也没意义。
+
+正确姿势：
+- 看元数据：`identify <file>` 或 `file <file>`（尺寸/大小/格式）
+- 需要肉眼看内容：先 `convert <file> -resize 256x256 /tmp/thumb.png` 再 read 缩略图（~50KB，token 可控）
+- 检查输出目录：`ls -la` 看产物大小和更新时间即可
+
 ## 超时与性能
 
 - 本地 GPU (Flux): ~68s/张

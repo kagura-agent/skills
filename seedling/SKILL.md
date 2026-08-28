@@ -1,3 +1,8 @@
+---
+name: seedling
+description: "Run the Seedling 养成 experience on Discord — an agent tamagotchi. Use when managing seedling users in #welcome, feeding, growth stages, or tamagotchi interactions."
+---
+
 # Seedling — Agent Tamagotchi Skill
 
 > OpenClaw skill for running the Seedling养成 experience on Discord.
